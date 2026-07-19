@@ -248,13 +248,15 @@ public partial class GameDetailWindow : Window
             {
                 if (Directory.Exists(workRoot)) Directory.Delete(workRoot, true);
                 task.WorkingDirectory = string.Empty; _save("成功任务临时目录已自动清理");
-                MessageBox.Show("游戏准备完成。", "准备游玩", MessageBoxButton.OK, MessageBoxImage.Information);
+                RestoreAfterProgressDialog(progress);
+                MessageBox.Show(this, "游戏准备完成。", "准备游玩", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception cleanupError)
             {
                 task.Message = "游戏准备完成，但临时目录自动清理失败，可在任务中心手动清理。";
                 task.ErrorMessage = cleanupError.ToString(); _save(task.Message); AppLogger.Error("成功任务临时目录清理失败", cleanupError);
-                MessageBox.Show($"游戏准备已经完成，但临时目录清理失败：{cleanupError.Message}\n\n可在任务中心稍后手动清理。", "准备完成，清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                RestoreAfterProgressDialog(progress);
+                MessageBox.Show(this, $"游戏准备已经完成，但临时目录清理失败：{cleanupError.Message}\n\n可在任务中心稍后手动清理。", "准备完成，清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
         catch (OperationCanceledException ex)
@@ -262,7 +264,8 @@ public partial class GameDetailWindow : Window
             RollbackFinalCommit(finalTarget, stagedFinal, finalCommitted);
             task.Status = "已取消"; task.Message = "用户取消了准备任务，临时目录已保留。"; task.ErrorMessage = ex.Message; task.CompletedAt = DateTime.Now;
             _game.Status = _versionSwitchInProgress ? "版本切换失败" : "未准备"; _versionSwitchInProgress = false; _save(task.Message);
-            MessageBox.Show($"准备任务已取消。\n\n临时目录已保留：\n{workRoot}", "任务已取消", MessageBoxButton.OK, MessageBoxImage.Information);
+            RestoreAfterProgressDialog(progress);
+            MessageBox.Show(this, $"准备任务已取消。\n\n临时目录已保留：\n{workRoot}", "任务已取消", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -270,14 +273,32 @@ public partial class GameDetailWindow : Window
             task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now;
             _game.Status = _versionSwitchInProgress ? "版本切换失败" : "操作失败"; _versionSwitchInProgress = false; _save("准备任务失败，临时目录已保留");
             AppLogger.Error($"准备游戏失败：{_game.DisplayName}", ex);
-            MessageBox.Show($"游戏准备失败：{ex.Message}\n\n临时目录已保留：\n{workRoot}", "准备失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            RestoreAfterProgressDialog(progress);
+            MessageBox.Show(this, $"游戏准备失败：{ex.Message}\n\n临时目录已保留：\n{workRoot}", "准备失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
             IsEnabled = true;
             progress.CloseSafely();
+            _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, new Action(RestoreWindowActivation));
         }
     }
+
+    private void RestoreAfterProgressDialog(PreparationProgressWindow progress)
+    {
+        if (progress.IsVisible) progress.Hide();
+        RestoreWindowActivation();
+    }
+
+    private void RestoreWindowActivation()
+    {
+        if (!IsVisible) return;
+        IsEnabled = true;
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        Focus();
+    }
+
     private async void Archive_Click(object sender, RoutedEventArgs e) => await ArchiveCurrentAsync(false);
     private async void SpecialArchive_Click(object sender, RoutedEventArgs e)
     {

@@ -572,6 +572,19 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 准备完成提示应由游戏详情窗口持有并在关闭进度后恢复激活()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var source = File.ReadAllText(Path.Combine(root!.FullName, "src", "GameManagement.App", "GameDetailWindow.xaml.cs"));
+
+        Assert.Contains("RestoreAfterProgressDialog(progress);", source);
+        Assert.Contains("MessageBox.Show(this, \"游戏准备完成。\"", source);
+        Assert.Contains("Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle", source);
+    }
+
+    [Fact]
     public void MP4前缀和ZIP尾部的混合文件应识别为ZIP()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
