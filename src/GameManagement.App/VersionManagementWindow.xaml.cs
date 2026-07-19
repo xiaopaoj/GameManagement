@@ -119,6 +119,11 @@ public partial class VersionManagementWindow : Window
         comparisons.Add(version.SourceSize > 0 ? $"总体积：{(version.SourceSize == temporary.SourceSize ? "匹配" : "不同")}" : "总体积：无历史记录");
         comparisons.Add(version.SourceModifiedAt.HasValue ? $"修改时间：{(version.SourceModifiedAt.Value == temporary.SourceModifiedAt ? "匹配" : "不同")}" : "修改时间：无历史记录");
         comparisons.Add(!string.IsNullOrWhiteSpace(version.SourceFingerprint) ? $"SHA-256 指纹：{(version.SourceFingerprint == temporary.SourceFingerprint ? "匹配" : "不同")}" : "SHA-256 指纹：无历史记录");
+        var volumeGroups = temporary.SourceKind == SourceKinds.ArchiveFile
+            ? new[] { ArchiveVolumeService.BuildGroup(temporary.SourcePath) }
+            : ArchiveVolumeService.DiscoverGroups(temporary.SourcePath);
+        var missingVolumes = volumeGroups.SelectMany(group => group.MissingFiles).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        comparisons.Add(missingVolumes.Count == 0 ? $"分卷完整性：已检查 {volumeGroups.Count} 个压缩文件组，未发现可推断缺失卷" : $"分卷完整性：发现 {missingVolumes.Count} 个可推断缺失卷（{string.Join("、", missingVolumes.Take(8))}{(missingVolumes.Count > 8 ? "……" : string.Empty)}）");
         var message = $"准备将版本“{version.VersionName}”的来源更新为：\n{temporary.SourcePath}\n\n匹配结果：\n{string.Join("\n", comparisons)}\n\n即使存在不匹配，也允许由用户确认替换。是否继续？";
         if (MessageBox.Show(message, "重新定位确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 

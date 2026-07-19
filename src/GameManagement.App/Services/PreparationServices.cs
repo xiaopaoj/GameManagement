@@ -178,9 +178,15 @@ public static class SourceCopyService
 
 public static class SpaceEstimationService
 {
+    public sealed record EstimateResult(long SourceCopyBytes, long FirstExtractionBytes, long SecondExtractionAndFinalReserveBytes, long SafetyReserveBytes, long TotalBytes, bool ContentMetadataAvailable);
+
     public static long GetSourceSize(string sourcePath)
     {
-        if (File.Exists(sourcePath)) return new FileInfo(sourcePath).Length;
+        if (File.Exists(sourcePath))
+        {
+            var group = ArchiveVolumeService.BuildGroup(sourcePath);
+            return group.Files.Where(File.Exists).Sum(path => new FileInfo(path).Length);
+        }
         if (!Directory.Exists(sourcePath)) return 0;
         return Directory.EnumerateFiles(sourcePath, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true })
             .Sum(file => { try { return new FileInfo(file).Length; } catch { return 0L; } });
@@ -191,6 +197,43 @@ public static class SpaceEstimationService
         if (sourceSize <= 0) return 5L * 1024 * 1024 * 1024;
         try { return checked(sourceSize * 4); }
         catch (OverflowException) { return long.MaxValue; }
+    }
+
+    public static async Task<EstimateResult> EstimateForSourceAsync(string sourcePath, CancellationToken token = default)
+    {
+        var sourceSize = await Task.Run(() => GetSourceSize(sourcePath), token);
+        long firstExtraction = 0;
+        var metadataAvailable = false;
+        try
+        {
+            var groups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(sourcePath, token), token);
+            foreach (var group in groups)
+            {
+                token.ThrowIfCancellationRequested();
+                try
+                {
+                    using var archive = ArchiveFactory.Open(group.EntryPath);
+                    var expanded = archive.Entries.Where(entry => !entry.IsDirectory).Sum(entry => Math.Max(0L, entry.Size));
+                    if (expanded > 0) { metadataAvailable = true; firstExtraction = Math.Max(firstExtraction, expanded); }
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException or FormatException or SharpCompress.Common.CryptographicException or System.Security.Cryptography.CryptographicException or OverflowException) { }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or NotSupportedException) { }
+
+        if (!metadataAvailable)
+        {
+            var fallback = EstimateRequiredSpace(sourceSize);
+            return new EstimateResult(sourceSize, 0, Math.Max(0, fallback - sourceSize), 0, fallback, false);
+        }
+        try
+        {
+            var secondAndFinal = checked(Math.Max(firstExtraction * 2, sourceSize * 2));
+            var subtotal = checked(sourceSize + firstExtraction + secondAndFinal);
+            var safety = checked(Math.Max(1024L * 1024 * 1024, subtotal / 10));
+            return new EstimateResult(sourceSize, firstExtraction, secondAndFinal, safety, checked(subtotal + safety), true);
+        }
+        catch (OverflowException) { return new EstimateResult(sourceSize, firstExtraction, long.MaxValue, 0, long.MaxValue, true); }
     }
 
     public static long GetAvailableSpace(string rootPath)

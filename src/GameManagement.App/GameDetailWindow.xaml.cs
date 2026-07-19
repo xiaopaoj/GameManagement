@@ -47,7 +47,6 @@ public partial class GameDetailWindow : Window
         MessageBox.Show("该游戏尚未准备可游玩目录。", "目录不存在", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    private void ShowFeature(string name, string description) => new FeatureStatusWindow(name, description, _game) { Owner = this }.ShowDialog();
 
     private async void Prepare_Click(object sender, RoutedEventArgs e)
     {
@@ -58,9 +57,12 @@ public partial class GameDetailWindow : Window
 
         var disks = _state.GameDisks.Where(disk => disk.Enabled && Directory.Exists(disk.RootPath)).OrderByDescending(disk => disk.IsDefault).ThenBy(disk => disk.DisplayName).ToList();
         if (disks.Count == 0) { ShowError("请先在设置中添加并启用至少一个游戏盘。"); FailPendingVersionSwitch(); return; }
-        var sourceSize = version.SourceSize > 0 ? version.SourceSize : await Task.Run(() => SpaceEstimationService.GetSourceSize(version.SourcePath));
-        var estimatedSpace = SpaceEstimationService.EstimateRequiredSpace(sourceSize);
-        var diskChoice = SelectChoice("选择游戏盘", $"请选择本次准备游戏使用的游戏盘。预计至少需要 {Models.SizeFormatter.Format(estimatedSpace)} 临时与解压空间：", disks.Select(disk => new ChoiceItem { Name = disk.IsDefault ? $"{disk.DisplayName}（默认）" : disk.DisplayName, Description = $"{disk.RootPath}（剩余 {disk.FreeSpaceText}，最低保留 {disk.MinimumFreeSpaceText}）", Value = disk }));
+        var estimate = await SpaceEstimationService.EstimateForSourceAsync(version.SourcePath);
+        var estimatedSpace = estimate.TotalBytes;
+        var estimateDetail = estimate.ContentMetadataAvailable
+            ? $"来源复制 {Models.SizeFormatter.Format(estimate.SourceCopyBytes)} + 首层展开 {Models.SizeFormatter.Format(estimate.FirstExtractionBytes)} + 二次解压与最终目录预留 {Models.SizeFormatter.Format(estimate.SecondExtractionAndFinalReserveBytes)} + 安全余量 {Models.SizeFormatter.Format(estimate.SafetyReserveBytes)}"
+            : $"无法读取压缩条目元数据，已按来源体积四倍安全回退（来源 {Models.SizeFormatter.Format(estimate.SourceCopyBytes)}）";
+        var diskChoice = SelectChoice("选择游戏盘", $"请选择本次准备游戏使用的游戏盘。预计至少需要 {Models.SizeFormatter.Format(estimatedSpace)} 临时与解压空间。\n{estimateDetail}", disks.Select(disk => new ChoiceItem { Name = disk.IsDefault ? $"{disk.DisplayName}（默认）" : disk.DisplayName, Description = $"{disk.RootPath}（剩余 {disk.FreeSpaceText}，最低保留 {disk.MinimumFreeSpaceText}）", Value = disk }));
         if (diskChoice?.Value is not GameDiskItem disk) { FailPendingVersionSwitch(); return; }
         var availableSpace = SpaceEstimationService.GetAvailableSpace(disk.RootPath);
         if (availableSpace < estimatedSpace + disk.MinimumFreeSpaceBytes)

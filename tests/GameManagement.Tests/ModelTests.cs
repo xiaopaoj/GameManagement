@@ -521,6 +521,45 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public async Task 空间估算应读取ZIP条目展开大小并提供分项结果()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var content = Path.Combine(root, "content");
+        var archive = Path.Combine(root, "game.zip");
+        Directory.CreateDirectory(content);
+        try
+        {
+            await File.WriteAllBytesAsync(Path.Combine(content, "large.bin"), new byte[2 * 1024 * 1024]);
+            ZipFile.CreateFromDirectory(content, archive, CompressionLevel.SmallestSize, false);
+
+            var estimate = await SpaceEstimationService.EstimateForSourceAsync(archive);
+
+            Assert.True(estimate.ContentMetadataAvailable);
+            Assert.True(estimate.FirstExtractionBytes >= 2 * 1024 * 1024);
+            Assert.True(estimate.TotalBytes > estimate.SourceCopyBytes + estimate.FirstExtractionBytes);
+            Assert.True(estimate.SafetyReserveBytes >= 1024L * 1024 * 1024);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 分卷来源空间估算应统计同组全部已存在分卷()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var first = Path.Combine(root, "game.zip.001");
+            var second = Path.Combine(root, "game.zip.002");
+            File.WriteAllBytes(first, new byte[1024]);
+            File.WriteAllBytes(second, new byte[2048]);
+
+            Assert.Equal(3072, SpaceEstimationService.GetSourceSize(first));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void MP4前缀和ZIP尾部的混合文件应识别为ZIP()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

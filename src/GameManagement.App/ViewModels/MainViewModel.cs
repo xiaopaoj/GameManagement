@@ -381,6 +381,8 @@ public sealed class MainViewModel : ObservableObject
 
     public void OpenDeletionHistory() => new DeletionHistoryWindow(_state) { Owner = Application.Current.MainWindow }.ShowDialog();
 
+    public void OpenTaskHistory() => new TaskHistoryWindow(_state) { Owner = Application.Current.MainWindow }.ShowDialog();
+
     private async Task TryRunPendingBackupAsync()
     {
         if (!_state.BackupSettings.PendingScheduledBackup || BackupTargetService.Resolve(_state.BackupSettings, false) is null) return;
