@@ -55,6 +55,7 @@
                 <Button Content="存档目录设置" Click="SaveDirectories_Click" Padding="14,8" Margin="4"/>
                 <Button Content="存档与快照" Click="Snapshots_Click" Padding="14,8" Margin="4"/>
                 <Button Content="版本管理" Click="Versions_Click" Padding="14,8" Margin="4"/>
+                <Button Content="解压密码管理" Click="Credentials_Click" Padding="14,8" Margin="4"/>
                 <Button Content="识别游戏目录" Click="RecognizeGame_Click" Padding="14,8" Margin="4"/>
                 <Button Content="重新定位原始文件" Click="RelocateSource_Click" Padding="14,8" Margin="4"/>
                 <Button Content="删除原始文件" Click="DeleteSource_Click" Padding="14,8" Margin="4"/>

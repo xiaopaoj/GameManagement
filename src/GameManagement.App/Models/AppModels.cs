@@ -71,6 +71,9 @@ public sealed class GameVersionItem
     public Guid? GameDiskId { get; set; }
     public string? FirstArchiveRelativePath { get; set; }
     public string? SecondArchiveRelativePath { get; set; }
+    public string FirstArchiveFormat { get; set; } = string.Empty;
+    public string SecondArchiveFormat { get; set; } = string.Empty;
+    public bool SecondArchiveUsedFallback { get; set; }
     public int SourceFileCount { get; set; }
     public long SourceSize { get; set; }
     public DateTime? SourceModifiedAt { get; set; }
@@ -86,7 +89,25 @@ public sealed class ArchiveCredentialItem
     public Guid GameVersionId { get; set; }
     public string ArchiveFingerprint { get; set; } = string.Empty;
     public string EncryptedPassword { get; set; } = string.Empty;
+    public int StepOrder { get; set; }
+    public string ArchiveDisplayName { get; set; } = string.Empty;
+    public string ArchiveRelativePath { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime? VerifiedAt { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.Now;
+}
+
+public sealed class ArchiveVolumeGroup
+{
+    public string GroupKey { get; set; } = string.Empty;
+    public string VolumeKind { get; set; } = "single";
+    public string EntryPath { get; set; } = string.Empty;
+    public string Format { get; set; } = string.Empty;
+    public List<string> Files { get; set; } = [];
+    public List<string> MissingFiles { get; set; } = [];
+    public bool IsMultiVolume => !VolumeKind.Equals("single", StringComparison.OrdinalIgnoreCase);
+    public long TotalSize => Files.Sum(path => { try { return new FileInfo(path).Length; } catch { return 0L; } });
+    public string VolumeSummary => IsMultiVolume ? $"{Files.Count} 个分卷" : "单文件";
 }
 
 public sealed class FileBaselineItem

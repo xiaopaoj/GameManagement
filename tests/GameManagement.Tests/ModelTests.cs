@@ -243,6 +243,125 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void PartRAR分卷应聚合并发现中间缺失卷()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var part1 = Path.Combine(root, "game.part01.rar");
+            File.WriteAllBytes(part1, []);
+            File.WriteAllBytes(Path.Combine(root, "game.part03.rar"), []);
+
+            var group = ArchiveVolumeService.BuildGroup(part1);
+
+            Assert.True(group.IsMultiVolume);
+            Assert.Equal(2, group.Files.Count);
+            Assert.Single(group.MissingFiles);
+            Assert.EndsWith("game.part02.rar", group.MissingFiles[0], StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(part1, group.EntryPath);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 旧RAR分卷应包含RAR入口和连续R卷()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var rar = Path.Combine(root, "game.rar");
+            File.WriteAllBytes(rar, []);
+            File.WriteAllBytes(Path.Combine(root, "game.r00"), []);
+            File.WriteAllBytes(Path.Combine(root, "game.r01"), []);
+
+            var group = ArchiveVolumeService.BuildGroup(rar);
+
+            Assert.Equal(3, group.Files.Count);
+            Assert.Empty(group.MissingFiles);
+            Assert.Equal(rar, group.EntryPath);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 分卷ZIP应要求从001开始连续存在()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var part2 = Path.Combine(root, "game.zip.002");
+            File.WriteAllBytes(part2, []);
+
+            var group = ArchiveVolumeService.BuildGroup(part2);
+
+            Assert.Single(group.MissingFiles);
+            Assert.EndsWith("game.zip.001", group.MissingFiles[0], StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 单个分卷入口来源应复制整组分卷并计算整组元数据()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var output = Path.Combine(root, "output");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var part1 = Path.Combine(root, "game.part01.rar");
+            var part2 = Path.Combine(root, "game.part02.rar");
+            File.WriteAllBytes(part1, new byte[10]);
+            File.WriteAllBytes(part2, new byte[20]);
+
+            var metadata = await SourceMetadataService.CaptureAsync(part1);
+            var copiedEntry = await SourceCopyService.CopyToWorkDirectoryAsync(part1, output);
+
+            Assert.Equal(2, metadata.FileCount);
+            Assert.Equal(30, metadata.TotalSize);
+            Assert.Equal(Path.Combine(output, "game.part01.rar"), copiedEntry);
+            Assert.True(File.Exists(Path.Combine(output, "game.part02.rar")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 密码记录应保存解压步骤路径和验证时间()
+    {
+        var state = new AppState();
+        var versionId = Guid.NewGuid();
+        var verifiedAt = new DateTime(2026, 7, 19, 13, 0, 0);
+
+        CredentialService.SavePassword(state, versionId, "fingerprint", "password", 2, "second.rar", "nested/second.rar", verifiedAt);
+
+        var item = Assert.Single(state.Credentials);
+        Assert.Equal(2, item.StepOrder);
+        Assert.Equal("second.rar", item.ArchiveDisplayName);
+        Assert.Equal("nested/second.rar", item.ArchiveRelativePath);
+        Assert.Equal(verifiedAt, item.VerifiedAt);
+        Assert.Equal("password", CredentialService.FindPassword(state, versionId, "fingerprint"));
+    }
+
+    [Fact]
+    public async Task ZIP无密码记录应能够重新验证()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var source = Path.Combine(root, "source");
+        var archive = Path.Combine(root, "game.zip");
+        Directory.CreateDirectory(source);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(source, "file.txt"), "test");
+            ZipFile.CreateFromDirectory(source, archive);
+
+            await ArchiveExtractionService.ValidatePasswordAsync(archive, string.Empty);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void 密码应通过DPAPI加密并可由当前用户解密()
     {
         var versionId = Guid.NewGuid();

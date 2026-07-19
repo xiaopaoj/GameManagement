@@ -31,7 +31,7 @@ public static class CredentialService
         return item is null ? null : Decrypt(item.EncryptedPassword, versionId);
     }
 
-    public static void SavePassword(AppState state, Guid versionId, string fingerprint, string password)
+    public static void SavePassword(AppState state, Guid versionId, string fingerprint, string password, int stepOrder = 0, string? archiveDisplayName = null, string? archiveRelativePath = null, DateTime? verifiedAt = null)
     {
         var item = state.Credentials.FirstOrDefault(x => x.GameVersionId == versionId && x.ArchiveFingerprint == fingerprint);
         if (item is null)
@@ -40,8 +40,14 @@ public static class CredentialService
             state.Credentials.Add(item);
         }
         item.EncryptedPassword = Encrypt(password, versionId);
+        if (stepOrder > 0) item.StepOrder = stepOrder;
+        if (archiveDisplayName is not null) item.ArchiveDisplayName = archiveDisplayName;
+        if (archiveRelativePath is not null) item.ArchiveRelativePath = archiveRelativePath;
+        item.VerifiedAt = verifiedAt;
         item.UpdatedAt = DateTime.Now;
     }
+
+    public static void DeletePassword(AppState state, Guid credentialId) => state.Credentials.RemoveAll(item => item.Id == credentialId);
 }
 
 public static class FileFingerprintService
@@ -60,6 +66,9 @@ public static class SourceMetadataService
     {
         if (File.Exists(sourcePath))
         {
+            var volumeGroup = ArchiveVolumeService.BuildGroup(sourcePath);
+            if (volumeGroup.IsMultiVolume && volumeGroup.Files.Count > 1)
+                return await CaptureFileSetAsync(Path.GetDirectoryName(sourcePath)!, volumeGroup.Files, progress, token);
             var info = new FileInfo(sourcePath);
             progress?.Report(new SourceMetadataProgress(0, 1, sourcePath));
             var fingerprint = await FileFingerprintService.ComputeSha256Async(sourcePath, token);
@@ -71,9 +80,14 @@ public static class SourceMetadataService
         var files = Directory.EnumerateFiles(sourcePath, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = false })
             .OrderBy(path => Path.GetRelativePath(sourcePath, path), StringComparer.OrdinalIgnoreCase)
             .ToList();
+        return await CaptureFileSetAsync(sourcePath, files, progress, token);
+    }
+
+    private static async Task<SourceMetadataSnapshot> CaptureFileSetAsync(string rootPath, IReadOnlyList<string> files, IProgress<SourceMetadataProgress>? progress, CancellationToken token)
+    {
         using var aggregate = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long totalSize = 0;
-        DateTime? modifiedAt = new DirectoryInfo(sourcePath).LastWriteTime;
+        DateTime? modifiedAt = Directory.Exists(rootPath) ? new DirectoryInfo(rootPath).LastWriteTime : null;
         for (var index = 0; index < files.Count; index++)
         {
             token.ThrowIfCancellationRequested();
@@ -82,7 +96,7 @@ public static class SourceMetadataService
             var info = new FileInfo(file);
             totalSize += info.Length;
             if (modifiedAt is null || info.LastWriteTime > modifiedAt) modifiedAt = info.LastWriteTime;
-            var relativePath = Path.GetRelativePath(sourcePath, file).Replace(Path.DirectorySeparatorChar, '/');
+            var relativePath = Path.GetRelativePath(rootPath, file).Replace(Path.DirectorySeparatorChar, '/');
             var fileHash = await FileFingerprintService.ComputeSha256Async(file, token);
             var manifestLine = $"{relativePath}\0{info.Length}\0{fileHash}\n";
             aggregate.AppendData(Encoding.UTF8.GetBytes(manifestLine));
@@ -107,9 +121,17 @@ public static class SourceCopyService
         Directory.CreateDirectory(destinationRoot);
         if (File.Exists(sourcePath))
         {
-            var target = Path.Combine(destinationRoot, Path.GetFileName(sourcePath));
-            await CopyFileAsync(sourcePath, target, token);
-            return target;
+            var group = ArchiveVolumeService.BuildGroup(sourcePath);
+            foreach (var file in group.Files)
+            {
+                token.ThrowIfCancellationRequested();
+                await CopyFileAsync(file, Path.Combine(destinationRoot, Path.GetFileName(file)), token);
+            }
+            var entryTarget = Path.Combine(destinationRoot, Path.GetFileName(group.EntryPath));
+            if (File.Exists(entryTarget)) return entryTarget;
+            var selectedTarget = Path.Combine(destinationRoot, Path.GetFileName(sourcePath));
+            if (!File.Exists(selectedTarget)) await CopyFileAsync(sourcePath, selectedTarget, token);
+            return selectedTarget;
         }
         if (!Directory.Exists(sourcePath)) throw new DirectoryNotFoundException($"原始文件或目录不存在：{sourcePath}");
         var targetDirectory = Path.Combine(destinationRoot, new DirectoryInfo(sourcePath).Name);
@@ -193,6 +215,17 @@ public static class ArchiveExtractionService
             if (!destination.StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException($"压缩包包含越界路径：{entryKey}");
             entry.WriteToDirectory(outputDirectory, new ExtractionOptions { ExtractFullPath = true, Overwrite = true });
         }
+    }, token);
+
+    public static Task ValidatePasswordAsync(string archivePath, string password, CancellationToken token = default) => Task.Run(() =>
+    {
+        token.ThrowIfCancellationRequested();
+        using var archive = ArchiveFactory.Open(archivePath, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password });
+        var entry = archive.Entries.FirstOrDefault(item => !item.IsDirectory);
+        if (entry is null) return;
+        using var stream = entry.OpenEntryStream();
+        Span<byte> buffer = stackalloc byte[1];
+        _ = stream.Read(buffer);
     }, token);
 }
 

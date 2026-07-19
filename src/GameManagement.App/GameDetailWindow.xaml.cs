@@ -100,39 +100,75 @@ public partial class GameDetailWindow : Window
             var copiedSource = await SourceCopyService.CopyToWorkDirectoryAsync(version.SourcePath, sourceRoot, cancellation.Token);
 
             UpdatePreparationTask(task, progress, 25, "正在扫描第一次解压候选…", copiedSource, "第一次解压中");
-            var firstArchives = await Task.Run(() => ArchiveDiscoveryService.Discover(copiedSource, cancellation.Token), cancellation.Token);
-            if (firstArchives.Count == 0) throw new InvalidOperationException("原始来源中没有发现 ZIP 或 RAR 文件。");
+            var firstGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(copiedSource, cancellation.Token), cancellation.Token);
+            if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有发现 ZIP、RAR 或可识别的分卷组。");
             progress.Hide(); IsEnabled = true;
-            var firstArchive = SelectArchive("选择第一次解压文件", "请选择第一次解压使用的 ZIP、RAR 或分卷入口文件：", firstArchives);
-            if (firstArchive is null) throw new OperationCanceledException("用户取消了第一次解压文件选择。", cancellation.Token);
+            var firstGroup = SelectArchiveGroupWithHistory("选择第一次解压文件", "请选择第一次解压使用的 ZIP、RAR 或分卷组：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压");
+            if (firstGroup is null) throw new OperationCanceledException("用户取消了第一次解压文件选择。", cancellation.Token);
+            ConfirmMissingVolumes(firstGroup, "第一次解压");
+            var firstArchive = firstGroup.EntryPath;
+            var firstRelativePath = GetArchiveRelativePath(copiedSource, firstArchive);
             IsEnabled = false; progress.Show();
             UpdatePreparationTask(task, progress, 35, $"正在执行第一次解压：{Path.GetFileName(firstArchive)}", firstArchive, "第一次解压中");
-            await ExtractWithCredentialAsync(version, firstArchive, step1, "第一次解压密码", progress, cancellation.Token);
-            version.FirstArchiveRelativePath = File.Exists(copiedSource) ? Path.GetFileName(firstArchive) : Path.GetRelativePath(copiedSource, firstArchive);
+            await ExtractWithCredentialAsync(version, firstArchive, step1, "第一次解压密码", progress, cancellation.Token, 1, firstRelativePath, firstGroup.MissingFiles.Count == 0);
+            version.FirstArchiveRelativePath = firstRelativePath;
+            version.FirstArchiveFormat = firstGroup.Format;
 
             UpdatePreparationTask(task, progress, 50, "正在扫描第二次解压候选…", step1, "第二次解压中");
-            var secondArchives = await Task.Run(() => ArchiveDiscoveryService.Discover(step1, cancellation.Token), cancellation.Token);
             var finalExtractionRoot = step2;
-            if (secondArchives.Count > 0)
+            var replayedFallback = false;
+            var recordedFallbackPath = version.SecondArchiveUsedFallback ? ResolveRecordedArchive(step1, version.SecondArchiveRelativePath) : null;
+            var replayRecordedFallback = false;
+            if (recordedFallbackPath is not null && File.Exists(recordedFallbackPath) && !string.IsNullOrWhiteSpace(version.SecondArchiveFormat))
             {
                 progress.Hide(); IsEnabled = true;
-                var secondArchive = SelectArchive("选择第二次解压文件", "请选择第二次解压使用的 ZIP 或 RAR 文件：", secondArchives);
-                if (secondArchive is null) throw new OperationCanceledException("用户取消了第二次解压文件选择。", cancellation.Token);
-                var detectedFormat = ArchiveDiscoveryService.DetectFormat(secondArchive) ?? throw new InvalidOperationException("无法判断第二次压缩文件格式。");
+                replayRecordedFallback = ConfirmHistoryReplay("第二次解压", recordedFallbackPath);
                 IsEnabled = false; progress.Show();
-                UpdatePreparationTask(task, progress, 60, $"正在定位真实 {detectedFormat} 数据并生成规范化临时文件…", secondArchive, "第二次解压中");
-                secondArchive = await ArchiveDiscoveryService.CreateNormalizedWorkingArchiveAsync(secondArchive, detectedFormat, cancellation.Token);
-                UpdatePreparationTask(task, progress, 65, $"正在执行第二次解压：{Path.GetFileName(secondArchive)}", secondArchive, "第二次解压中");
-                await ExtractWithCredentialAsync(version, secondArchive, step2, "第二次解压密码", progress, cancellation.Token);
-                version.SecondArchiveRelativePath = Path.GetRelativePath(step1, secondArchive);
             }
-            else
+            if (replayRecordedFallback && recordedFallbackPath is not null)
             {
-                var largestFile = await Task.Run(() => ArchiveDiscoveryService.FindLargestUnrecognizedFile(step1, cancellation.Token), cancellation.Token);
-                if (largestFile is null) throw new InvalidOperationException("第一次解压结果中没有找到第二次压缩文件，也没有可以尝试改名的文件。");
-                UpdatePreparationTask(task, progress, 60, $"未识别到压缩格式，准备尝试最大文件：{Path.GetFileName(largestFile)}", largestFile, "第二次解压中");
-                var attemptedArchive = await TryLargestFileAsArchiveAsync(version, largestFile, step2, progress, cancellation.Token);
-                version.SecondArchiveRelativePath = Path.GetRelativePath(step1, attemptedArchive);
+                var replayArchive = RenameForAttempt(recordedFallbackPath, version.SecondArchiveFormat.Equals("ZIP", StringComparison.OrdinalIgnoreCase) ? ".zip" : ".rar");
+                UpdatePreparationTask(task, progress, 65, $"正在重放历史第二次解压：{Path.GetFileName(replayArchive)}", replayArchive, "第二次解压中");
+                await ExtractWithCredentialAsync(version, replayArchive, step2, "第二次解压密码", progress, cancellation.Token, 2, version.SecondArchiveRelativePath ?? Path.GetFileName(recordedFallbackPath), true);
+                replayedFallback = true;
+            }
+
+            if (!replayedFallback)
+            {
+                var secondGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(step1, cancellation.Token), cancellation.Token);
+                if (secondGroups.Count > 0)
+                {
+                    progress.Hide(); IsEnabled = true;
+                    var secondGroup = SelectArchiveGroupWithHistory("选择第二次解压文件", "请选择第二次解压使用的 ZIP、RAR 或分卷组：", secondGroups, step1, version.SecondArchiveUsedFallback ? null : version.SecondArchiveRelativePath, "第二次解压");
+                    if (secondGroup is null) throw new OperationCanceledException("用户取消了第二次解压文件选择。", cancellation.Token);
+                    ConfirmMissingVolumes(secondGroup, "第二次解压");
+                    var originalSecondArchive = secondGroup.EntryPath;
+                    var secondRelativePath = Path.GetRelativePath(step1, originalSecondArchive);
+                    var detectedFormat = secondGroup.Format;
+                    IsEnabled = false; progress.Show();
+                    var workingSecondArchive = originalSecondArchive;
+                    if (!secondGroup.IsMultiVolume)
+                    {
+                        UpdatePreparationTask(task, progress, 60, $"正在定位真实 {detectedFormat} 数据并生成规范化临时文件…", originalSecondArchive, "第二次解压中");
+                        workingSecondArchive = await ArchiveDiscoveryService.CreateNormalizedWorkingArchiveAsync(originalSecondArchive, detectedFormat, cancellation.Token);
+                    }
+                    UpdatePreparationTask(task, progress, 65, $"正在执行第二次解压：{Path.GetFileName(workingSecondArchive)}", workingSecondArchive, "第二次解压中");
+                    await ExtractWithCredentialAsync(version, workingSecondArchive, step2, "第二次解压密码", progress, cancellation.Token, 2, secondRelativePath, secondGroup.MissingFiles.Count == 0);
+                    version.SecondArchiveRelativePath = secondRelativePath;
+                    version.SecondArchiveFormat = detectedFormat;
+                    version.SecondArchiveUsedFallback = false;
+                }
+                else
+                {
+                    var largestFile = await Task.Run(() => ArchiveDiscoveryService.FindLargestUnrecognizedFile(step1, cancellation.Token), cancellation.Token);
+                    if (largestFile is null) throw new InvalidOperationException("第一次解压结果中没有找到第二次压缩文件，也没有可以尝试改名的文件。");
+                    var originalRelativePath = Path.GetRelativePath(step1, largestFile);
+                    UpdatePreparationTask(task, progress, 60, $"未识别到压缩格式，准备尝试最大文件：{Path.GetFileName(largestFile)}", largestFile, "第二次解压中");
+                    var attemptedArchive = await TryLargestFileAsArchiveAsync(version, largestFile, step2, progress, cancellation.Token, originalRelativePath);
+                    version.SecondArchiveRelativePath = originalRelativePath;
+                    version.SecondArchiveFormat = attemptedArchive.Format;
+                    version.SecondArchiveUsedFallback = true;
+                }
             }
 
             UpdatePreparationTask(task, progress, 75, "正在递归查找第一个有效 EXE 并确定游戏目录…", finalExtractionRoot, "等待确认游戏目录");
@@ -203,6 +239,7 @@ public partial class GameDetailWindow : Window
     private void SaveDirectories_Click(object sender, RoutedEventArgs e) => ShowFeature("存档目录设置", "添加、修改、启用、禁用或删除该游戏关联的多个 Windows 系统存档目录。");
     private void Snapshots_Click(object sender, RoutedEventArgs e) => ShowFeature("存档与快照", "查看当前存档、最近三个正常快照、最近三个异常快照和文件清单。");
     private void Versions_Click(object sender, RoutedEventArgs e) => OpenVersionManagement(null);
+    private void Credentials_Click(object sender, RoutedEventArgs e) => new CredentialManagementWindow(_game, _state, _save) { Owner = this }.ShowDialog();
     private void RecognizeGame_Click(object sender, RoutedEventArgs e) => ShowFeature("识别游戏目录", "递归查找第一个有效 EXE，以其所属文件夹作为游戏目录，然后展示该目录直属的全部 EXE 和 index.html 供用户选择启动文件。");
     private void RelocateSource_Click(object sender, RoutedEventArgs e) => OpenVersionManagement(_game.CurrentVersionId);
     private void DeleteSource_Click(object sender, RoutedEventArgs e) => ShowFeature("删除原始文件", "该操作最终需要两次人工确认，并且只能将原始压缩文件和相关分卷移入 Windows 回收站。");
@@ -240,16 +277,42 @@ public partial class GameDetailWindow : Window
         return window.ShowDialog() == true ? window.SelectedChoice : null;
     }
 
-    private string? SelectArchive(string title, string prompt, IReadOnlyList<string> archives)
+    private ArchiveVolumeGroup? SelectArchiveGroupWithHistory(string title, string prompt, IReadOnlyList<ArchiveVolumeGroup> groups, string sourceRoot, string? recordedRelativePath, string stepName)
     {
-        var choices = archives.Select(path => new ChoiceItem
+        var recordedPath = ResolveRecordedArchive(sourceRoot, recordedRelativePath);
+        var recordedGroup = recordedPath is null ? null : groups.FirstOrDefault(group => group.Files.Any(path => PathsEqual(path, recordedPath)) || PathsEqual(group.EntryPath, recordedPath));
+        if (recordedGroup is not null && ConfirmHistoryReplay(stepName, recordedGroup.EntryPath)) return recordedGroup;
+
+        var choices = groups.Select(group => new ChoiceItem
         {
-            Name = Path.GetFileName(path),
-            Description = $"{ArchiveDiscoveryService.DetectFormat(path) ?? "未知"}｜{Models.SizeFormatter.Format(new FileInfo(path).Length)}｜{path}",
-            Value = path
+            Name = Path.GetFileName(group.EntryPath),
+            Description = $"{group.Format}｜{group.VolumeSummary}｜{Models.SizeFormatter.Format(group.TotalSize)}｜{(group.MissingFiles.Count == 0 ? "分卷完整" : $"缺失 {group.MissingFiles.Count} 卷")}｜{group.EntryPath}",
+            Value = group
         });
-        return SelectChoice(title, prompt, choices)?.Value as string;
+        return SelectChoice(title, prompt, choices)?.Value as ArchiveVolumeGroup;
     }
+
+    private bool ConfirmHistoryReplay(string stepName, string archivePath) => MessageBox.Show($"检测到上次成功使用的{stepName}文件：\n{archivePath}\n\n是否重放历史选择和已保存密码？", "历史解压流程", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+
+    private void ConfirmMissingVolumes(ArchiveVolumeGroup group, string stepName)
+    {
+        if (group.MissingFiles.Count == 0) return;
+        var missing = string.Join("\n", group.MissingFiles.Select(Path.GetFileName));
+        var result = MessageBox.Show($"{stepName}分卷组存在可推断的缺失文件：\n{missing}\n\n按照需求，只允许在人工确认后尝试解压一次；失败后立即停止，不重试密码，也不继续后续步骤。是否仍要尝试？", "分卷缺失确认", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes) throw new OperationCanceledException("用户取消了缺失分卷解压尝试。");
+    }
+
+    private static string GetArchiveRelativePath(string sourceRoot, string archivePath) => File.Exists(sourceRoot) ? Path.GetFileName(archivePath) : Path.GetRelativePath(sourceRoot, archivePath);
+
+    private static string? ResolveRecordedArchive(string sourceRoot, string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)) return null;
+        if (File.Exists(sourceRoot)) return Path.GetFileName(sourceRoot).Equals(Path.GetFileName(relativePath), StringComparison.OrdinalIgnoreCase) ? sourceRoot : null;
+        var path = Path.GetFullPath(Path.Combine(sourceRoot, relativePath));
+        return File.Exists(path) ? path : null;
+    }
+
+    private static bool PathsEqual(string left, string right) => string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
 
     private string? SelectLaunchFile(string rootDirectory, IReadOnlyList<string> launchFiles)
     {
@@ -262,7 +325,7 @@ public partial class GameDetailWindow : Window
         return SelectChoice("选择游戏启动文件", $"已确定游戏目录：\n{rootDirectory}\n\n请选择该目录直属的 EXE 或 index.html 作为启动文件：", choices)?.Value as string;
     }
 
-    private async Task ExtractWithCredentialAsync(GameVersionItem version, string archivePath, string outputDirectory, string title, PreparationProgressWindow progress, CancellationToken token)
+    private async Task ExtractWithCredentialAsync(GameVersionItem version, string archivePath, string outputDirectory, string title, PreparationProgressWindow progress, CancellationToken token, int stepOrder, string archiveRelativePath, bool allowPasswordRetry)
     {
         var fingerprint = await FileFingerprintService.ComputeSha256Async(archivePath, token);
         var password = CredentialService.FindPassword(_state, version.Id, fingerprint);
@@ -276,6 +339,11 @@ public partial class GameDetailWindow : Window
         {
             await ArchiveExtractionService.ExtractAsync(archivePath, outputDirectory, password, token);
         }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) when (!allowPasswordRetry)
+        {
+            throw new InvalidDataException($"分卷存在缺失，本次已按人工确认尝试一次并失败，不再重试：{ex.Message}", ex);
+        }
         catch
         {
             if (Directory.Exists(outputDirectory)) Directory.Delete(outputDirectory, true);
@@ -285,10 +353,10 @@ public partial class GameDetailWindow : Window
             password = replacement;
             await ArchiveExtractionService.ExtractAsync(archivePath, outputDirectory, password, token);
         }
-        CredentialService.SavePassword(_state, version.Id, fingerprint, password);
+        CredentialService.SavePassword(_state, version.Id, fingerprint, password, stepOrder, Path.GetFileName(archivePath), archiveRelativePath, DateTime.Now);
     }
 
-    private async Task<string> TryLargestFileAsArchiveAsync(GameVersionItem version, string largestFile, string outputDirectory, PreparationProgressWindow progress, CancellationToken token)
+    private async Task<(string Path, string Format)> TryLargestFileAsArchiveAsync(GameVersionItem version, string largestFile, string outputDirectory, PreparationProgressWindow progress, CancellationToken token, string originalRelativePath)
     {
         var currentPath = largestFile;
         Exception? zipError = null;
@@ -296,8 +364,8 @@ public partial class GameDetailWindow : Window
         {
             currentPath = RenameForAttempt(currentPath, ".zip");
             progress.UpdateStatus($"正在将最大文件作为 ZIP 尝试第二次解压：{Path.GetFileName(currentPath)}");
-            await ExtractWithCredentialAsync(version, currentPath, outputDirectory, "第二次解压密码（ZIP 尝试）", progress, token);
-            return currentPath;
+            await ExtractWithCredentialAsync(version, currentPath, outputDirectory, "第二次解压密码（ZIP 尝试）", progress, token, 2, originalRelativePath, true);
+            return (currentPath, "ZIP");
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -310,8 +378,8 @@ public partial class GameDetailWindow : Window
         {
             currentPath = RenameForAttempt(currentPath, ".rar");
             progress.UpdateStatus($"ZIP 尝试失败，正在将最大文件作为 RAR 尝试：{Path.GetFileName(currentPath)}");
-            await ExtractWithCredentialAsync(version, currentPath, outputDirectory, "第二次解压密码（RAR 尝试）", progress, token);
-            return currentPath;
+            await ExtractWithCredentialAsync(version, currentPath, outputDirectory, "第二次解压密码（RAR 尝试）", progress, token, 2, originalRelativePath, true);
+            return (currentPath, "RAR");
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception rarError)
