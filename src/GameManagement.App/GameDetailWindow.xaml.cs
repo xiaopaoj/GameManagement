@@ -187,7 +187,7 @@ public partial class GameDetailWindow : Window
             var executableRelativePath = Path.GetRelativePath(selectedGameRoot, launchFile);
 
             UpdatePreparationTask(task, progress, 92, "正在计算游戏文件 SHA-256 基线，这可能需要较长时间…", stagedFinal, "等待确认游戏目录");
-            var baselines = await BaselineService.BuildAsync(version.Id, stagedFinal, cancellation.Token);
+            var baselines = await BaselineService.BuildAsync(_game.Id, version.Id, stagedFinal, cancellation.Token);
             _state.FileBaselines.RemoveAll(item => item.GameVersionId == version.Id);
             _state.FileBaselines.AddRange(baselines);
 
@@ -243,7 +243,7 @@ public partial class GameDetailWindow : Window
     private void SpecialArchive_Click(object sender, RoutedEventArgs e) => ShowFeature("特殊归档", "选择已有的混乱游戏目录，与从原始压缩文件构建的干净基准目录比较后提取存档。");
     private void ManualBackup_Click(object sender, RoutedEventArgs e) => ShowFeature("手动备份", "将当前游戏的本地存档创建为无密码 ZIP，完成文件清单和 Hash 校验。");
     private void SaveDirectories_Click(object sender, RoutedEventArgs e) => ShowFeature("存档目录设置", "添加、修改、启用、禁用或删除该游戏关联的多个 Windows 系统存档目录。");
-    private void Snapshots_Click(object sender, RoutedEventArgs e) => ShowFeature("存档与快照", "查看当前存档、最近三个正常快照、最近三个异常快照和文件清单。");
+    private void Snapshots_Click(object sender, RoutedEventArgs e) => new SaveManagementWindow(_state, _save, _game) { Owner = this }.ShowDialog();
     private void Versions_Click(object sender, RoutedEventArgs e) => OpenVersionManagement(null);
     private void Credentials_Click(object sender, RoutedEventArgs e) => new CredentialManagementWindow(_game, _state, _save) { Owner = this }.ShowDialog();
     private async void RecognizeGame_Click(object sender, RoutedEventArgs e)

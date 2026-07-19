@@ -608,6 +608,115 @@ public sealed class ModelTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public async Task 增量比较应标记基线文件大型文件资源包和具体排除规则()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var playable = Path.Combine(root, "game");
+        Directory.CreateDirectory(playable);
+        var game = new GameItem { DisplayName = "测试游戏", PlayableRootPath = playable };
+        var version = new GameVersionItem();
+        game.CurrentVersionId = version.Id;
+        try
+        {
+            var savePath = Path.Combine(playable, "save.dat");
+            await File.WriteAllTextAsync(savePath, "原始内容");
+            var state = new AppState { FileBaselines = await BaselineService.BuildAsync(game.Id, version.Id, playable) };
+            state.SaveFileRules.Add(new SaveFileRuleItem { GameId = game.Id, RelativePath = "save.dat" });
+            state.SaveFileExclusions.Add(new SaveFileExclusionItem { GameId = game.Id, RelativePath = "ignored.log" });
+            await File.WriteAllTextAsync(savePath, "修改后的存档内容");
+            await File.WriteAllTextAsync(Path.Combine(playable, "resources.pak"), "资源包");
+            await File.WriteAllTextAsync(Path.Combine(playable, "ignored.log"), "日志");
+            await using (var large = File.Create(Path.Combine(playable, "large.bin"))) large.SetLength(SaveChangeDetectionService.LargeFileThreshold);
+
+            var result = await SaveChangeDetectionService.DetectAsync(state, game, SaveSnapshotKinds.Normal);
+
+            var confirmedSave = Assert.Single(result, item => item.RelativePath == "save.dat");
+            Assert.True(confirmedSave.PreviouslyConfirmed);
+            Assert.False(confirmedSave.DefaultExcluded);
+            Assert.Contains(result, item => item.RelativePath == "large.bin" && item.DefaultExcluded && item.ExclusionReason.Contains("100 MB"));
+            Assert.Contains(result, item => item.RelativePath == "resources.pak" && item.DefaultExcluded && item.ExclusionReason.Contains("资源包"));
+            Assert.Contains(result, item => item.RelativePath == "ignored.log" && item.Decision == SaveCandidateDecisions.Excluded);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 确认候选后应创建并校验正常与异常快照且避免重复快照()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var playable = Path.Combine(root, "playable");
+        var diskRoot = Path.Combine(root, "disk");
+        Directory.CreateDirectory(playable); Directory.CreateDirectory(diskRoot);
+        var disk = new GameDiskItem { RootPath = diskRoot };
+        var game = new GameItem { DisplayName = "快照测试", PlayableRootPath = playable, CurrentGameDiskId = disk.Id, CurrentVersionId = Guid.NewGuid() };
+        var state = new AppState { Games = [game], GameDisks = [disk] };
+        try
+        {
+            var source = Path.Combine(playable, "save.dat");
+            await File.WriteAllTextAsync(source, "第一次存档");
+            var first = new SaveCandidateItem { GameId = game.Id, GameVersionId = game.CurrentVersionId!.Value, GameName = game.DisplayName, SourcePath = source, RelativePath = "save.dat", ChangeType = "新增", SnapshotKind = SaveSnapshotKinds.Normal };
+            state.SaveCandidates.Add(first);
+
+            var normal = await SaveSnapshotService.ApplyAndCreateAsync(state, game, [first.Id]);
+
+            Assert.True(normal.ContentChanged);
+            Assert.NotNull(normal.Snapshot);
+            Assert.True(normal.Snapshot!.Verified);
+            Assert.True(File.Exists(Path.Combine(GameSavePathService.GetCurrentDirectory(state, game), "save.dat")));
+            Assert.True(File.Exists(normal.Snapshot.ManifestPath));
+            Assert.True(game.HasLocalSave);
+            Assert.DoesNotContain(Directory.EnumerateDirectories(GameSavePathService.GetGameSaveRoot(state, game)), path => Path.GetFileName(path).StartsWith(".current-", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".partial", StringComparison.OrdinalIgnoreCase));
+
+            var duplicate = new SaveCandidateItem { GameId = game.Id, GameVersionId = game.CurrentVersionId.Value, GameName = game.DisplayName, SourcePath = source, RelativePath = "save.dat", ChangeType = "修改", SnapshotKind = SaveSnapshotKinds.Normal };
+            state.SaveCandidates.Add(duplicate);
+            var duplicateResult = await SaveSnapshotService.ApplyAndCreateAsync(state, game, [duplicate.Id]);
+            Assert.False(duplicateResult.ContentChanged);
+            Assert.Null(duplicateResult.Snapshot);
+
+            await File.WriteAllTextAsync(source, "异常退出后的存档");
+            game.LastExitCode = 1;
+            var abnormalCandidate = new SaveCandidateItem { GameId = game.Id, GameVersionId = game.CurrentVersionId.Value, GameName = game.DisplayName, SourcePath = source, RelativePath = "save.dat", ChangeType = "修改", SnapshotKind = SaveSnapshotKinds.Abnormal };
+            state.SaveCandidates.Add(abnormalCandidate);
+            var abnormal = await SaveSnapshotService.ApplyAndCreateAsync(state, game, [abnormalCandidate.Id]);
+
+            Assert.True(abnormal.ContentChanged);
+            Assert.Equal(SaveSnapshotKinds.Abnormal, abnormal.Snapshot!.SnapshotKind);
+            Assert.Contains("abnormal-snapshots", abnormal.Snapshot.DirectoryPath);
+            Assert.Equal(2, state.SaveSnapshots.Count);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 同类快照超过三个时只标记建议清理不自动删除()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var playable = Path.Combine(root, "playable");
+        var diskRoot = Path.Combine(root, "disk");
+        Directory.CreateDirectory(playable); Directory.CreateDirectory(diskRoot);
+        var disk = new GameDiskItem { RootPath = diskRoot };
+        var game = new GameItem { DisplayName = "保留测试", PlayableRootPath = playable, CurrentGameDiskId = disk.Id, CurrentVersionId = Guid.NewGuid() };
+        var state = new AppState { Games = [game], GameDisks = [disk] };
+        try
+        {
+            var source = Path.Combine(playable, "save.dat");
+            for (var index = 0; index < 4; index++)
+            {
+                await File.WriteAllTextAsync(source, $"存档版本 {index}");
+                var candidate = new SaveCandidateItem { GameId = game.Id, GameVersionId = game.CurrentVersionId!.Value, GameName = game.DisplayName, SourcePath = source, RelativePath = "save.dat", ChangeType = index == 0 ? "新增" : "修改", SnapshotKind = SaveSnapshotKinds.Normal };
+                state.SaveCandidates.Add(candidate);
+                var result = await SaveSnapshotService.ApplyAndCreateAsync(state, game, [candidate.Id]);
+                Assert.True(result.ContentChanged);
+            }
+
+            Assert.Equal(4, state.SaveSnapshots.Count);
+            Assert.Single(state.SaveSnapshots, snapshot => snapshot.CleanupSuggested);
+            Assert.All(state.SaveSnapshots, snapshot => Assert.True(Directory.Exists(snapshot.DirectoryPath)));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

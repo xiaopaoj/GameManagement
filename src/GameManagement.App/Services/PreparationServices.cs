@@ -349,7 +349,9 @@ public sealed record GameLaunchSelection(string GameRoot, string LaunchFile);
 
 public static class BaselineService
 {
-    public static async Task<List<FileBaselineItem>> BuildAsync(Guid versionId, string rootDirectory, CancellationToken token = default)
+    public static Task<List<FileBaselineItem>> BuildAsync(Guid versionId, string rootDirectory, CancellationToken token = default) => BuildAsync(Guid.Empty, versionId, rootDirectory, token);
+
+    public static async Task<List<FileBaselineItem>> BuildAsync(Guid gameId, Guid versionId, string rootDirectory, CancellationToken token = default)
     {
         var result = new List<FileBaselineItem>();
         foreach (var file in Directory.EnumerateFiles(rootDirectory, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = false }))
@@ -358,11 +360,13 @@ public static class BaselineService
             var info = new FileInfo(file);
             result.Add(new FileBaselineItem
             {
+                GameId = gameId,
                 GameVersionId = versionId,
                 RelativePath = Path.GetRelativePath(rootDirectory, file),
                 FileSize = info.Length,
                 ModifiedAt = info.LastWriteTime,
-                Sha256 = await FileFingerprintService.ComputeSha256Async(file, token)
+                Sha256 = await FileFingerprintService.ComputeSha256Async(file, token),
+                FileCategory = "游戏文件"
             });
         }
         return result;

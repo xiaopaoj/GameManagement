@@ -29,6 +29,7 @@ public sealed class MainViewModel : ObservableObject
     private string _candidateDriveFilter = "全部";
     private OperationTaskItem? _selectedTask;
     private CancellationTokenSource? _scanCancellation;
+    private readonly HashSet<Guid> _saveScansInProgress = [];
 
     public ObservableCollection<GameItem> Games { get; } = [];
     public ObservableCollection<ScanPathItem> ScanPaths { get; } = [];
@@ -295,13 +296,52 @@ public sealed class MainViewModel : ObservableObject
 
     private void OnGameStateChanged(GameItem game, string message)
     {
-        Application.Current.Dispatcher.BeginInvoke(() =>
+        Application.Current.Dispatcher.BeginInvoke(async () =>
         {
             _store.Save(_state);
             StatusMessage = message;
             CollectionViewSource.GetDefaultView(Games).Refresh();
             AppLogger.Info($"{game.DisplayName}：{message}");
+            if (message.StartsWith("主游戏程序已退出", StringComparison.Ordinal)) await DetectSaveChangesAfterExitAsync(game);
         });
+    }
+
+    private async Task DetectSaveChangesAfterExitAsync(GameItem game)
+    {
+        if (!_saveScansInProgress.Add(game.Id)) return;
+        var task = new OperationTaskItem { Name = $"扫描存档变化：{game.DisplayName}", TaskType = "存档扫描", GameId = game.Id, GameVersionId = game.CurrentVersionId, Status = "运行中", Message = "正在比较游戏目录与首次文件基线" };
+        _state.OperationTasks.Add(task); Tasks.Insert(0, task); _store.Save(_state);
+        try
+        {
+            var kind = game.LastExitCode == 0 ? SaveSnapshotKinds.Normal : SaveSnapshotKinds.Abnormal;
+            var candidates = await SaveChangeDetectionService.DetectAsync(_state, game, kind);
+            SaveChangeDetectionService.ReplaceDetectedCandidates(_state, game, candidates);
+            var automaticCandidates = candidates.Where(item => item.PreviouslyConfirmed && item.ChangeType != "删除" && item.Decision == SaveCandidateDecisions.Pending).Select(item => item.Id).ToList();
+            SaveSnapshotCreationResult? automaticResult = null;
+            if (automaticCandidates.Count > 0) automaticResult = await SaveSnapshotService.ApplyAndCreateAsync(_state, game, automaticCandidates);
+            task.Status = "完成"; task.Progress = 100; task.Message = automaticResult?.ContentChanged == true ? $"发现 {candidates.Count} 个变化，已自动创建{kind}快照" : $"发现 {candidates.Count} 个游戏目录变化"; task.CompletedAt = DateTime.Now;
+            _store.Save(_state);
+            var pendingCount = candidates.Count(item => item.Decision == SaveCandidateDecisions.Pending);
+            StatusMessage = pendingCount == 0 ? "游戏退出后未发现需要确认的存档变化" : $"发现 {pendingCount} 个待确认存档候选";
+            if (pendingCount > 0)
+            {
+                var owner = Application.Current.Windows.OfType<Window>().FirstOrDefault(window => window.IsActive) ?? Application.Current.MainWindow;
+                var window = new SaveManagementWindow(_state, message => Save(message), game) { Owner = owner };
+                window.Show();
+            }
+        }
+        catch (Exception ex)
+        {
+            task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now;
+            _store.Save(_state); AppLogger.Error($"游戏退出后扫描存档变化失败：{game.DisplayName}", ex); StatusMessage = $"存档变化扫描失败：{ex.Message}";
+        }
+        finally { _saveScansInProgress.Remove(game.Id); }
+    }
+
+    public void OpenSaveManagement(int initialTab, string snapshotFilter = "全部")
+    {
+        new SaveManagementWindow(_state, message => Save(message), null, initialTab, snapshotFilter) { Owner = Application.Current.MainWindow }.ShowDialog();
+        CollectionViewSource.GetDefaultView(Games).Refresh();
     }
 
     public void OpenSelectedGameDetails()
