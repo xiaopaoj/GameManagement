@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Threading;
 using GameManagement.Services;
 
 namespace GameManagement;
@@ -7,6 +8,9 @@ public partial class App : Application
 {
     protected override async void OnStartup(StartupEventArgs e)
     {
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
         try
         {
             AppPaths.EnsureDirectories();
@@ -44,6 +48,31 @@ public partial class App : Application
             MessageBox.Show($"软件初始化失败：{ex.Message}\n请确认程序所在目录具有写入权限。", "启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(-1);
         }
+    }
+
+    private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
+    {
+        TryLogUnhandledException("界面线程发生未处理异常", e.Exception);
+        e.Handled = true;
+        MessageBox.Show($"软件发生未处理错误并将安全退出：{e.Exception.Message}\n详细信息已写入运行日志。", "未处理错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        Shutdown(-1);
+    }
+
+    private static void OnAppDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        if (e.ExceptionObject is Exception exception) TryLogUnhandledException("后台线程发生未处理异常", exception);
+    }
+
+    private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        TryLogUnhandledException("异步任务发生未观察异常", e.Exception);
+        e.SetObserved();
+    }
+
+    private static void TryLogUnhandledException(string message, Exception exception)
+    {
+        try { AppLogger.Error(message, exception); }
+        catch { }
     }
 
     private static void MergeAndSaveBackupState(StateStore store, Models.AppState backupState)

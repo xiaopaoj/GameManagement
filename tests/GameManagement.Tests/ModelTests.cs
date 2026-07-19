@@ -560,6 +560,18 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 扫描候选只读状态列应使用单向绑定()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var xaml = File.ReadAllText(Path.Combine(root!.FullName, "src", "GameManagement.App", "MainWindow.xaml"));
+
+        Assert.Contains("Binding=\"{Binding PathValid, Mode=OneWay}\"", xaml);
+        Assert.Contains("Binding=\"{Binding Added, Mode=OneWay}\"", xaml);
+    }
+
+    [Fact]
     public void MP4前缀和ZIP尾部的混合文件应识别为ZIP()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
