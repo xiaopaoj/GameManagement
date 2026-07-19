@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.Collections;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Data;
 using GameManagement.Models;
 using GameManagement.Services;
 using Microsoft.Win32;
@@ -17,8 +19,16 @@ public sealed class MainViewModel : ObservableObject
     private bool _hideAddedCandidates = true;
     private GameItem? _selectedGame;
     private ScanPathItem? _selectedScanPath;
-    private ScanCandidate? _selectedCandidate;
     private GameDiskItem? _selectedGameDisk;
+    private bool _isScanning;
+    private int _scanProgress;
+    private string _scanProgressMessage = string.Empty;
+    private string _candidateSearchText = string.Empty;
+    private string _candidateKindFilter = "全部";
+    private string _candidateAddedFilter = "全部";
+    private string _candidateDriveFilter = "全部";
+    private OperationTaskItem? _selectedTask;
+    private CancellationTokenSource? _scanCancellation;
 
     public ObservableCollection<GameItem> Games { get; } = [];
     public ObservableCollection<ScanPathItem> ScanPaths { get; } = [];
@@ -26,31 +36,54 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<ScanCandidate> Candidates { get; } = [];
     public ObservableCollection<ScanCandidate> VisibleCandidates { get; } = [];
     public ObservableCollection<OperationTaskItem> Tasks { get; } = [];
+    public ObservableCollection<string> CandidateKindOptions { get; } = ["全部", SourceKinds.ArchiveFile, SourceKinds.ArchiveDirectory];
+    public ObservableCollection<string> CandidateAddedOptions { get; } = ["全部", "未添加", "已添加"];
+    public ObservableCollection<string> CandidateDriveOptions { get; } = ["全部"];
     public string ApplicationRoot => AppPaths.Root;
+    public bool IsScanning { get => _isScanning; set { if (Set(ref _isScanning, value)) Raise(nameof(IsInterfaceEnabled)); } }
+    public bool IsInterfaceEnabled => !IsScanning;
+    public int ScanProgress { get => _scanProgress; set => Set(ref _scanProgress, value); }
+    public string ScanProgressMessage { get => _scanProgressMessage; set => Set(ref _scanProgressMessage, value); }
+    public string CandidateSearchText { get => _candidateSearchText; set { if (Set(ref _candidateSearchText, value)) RefreshCandidates(); } }
+    public string CandidateKindFilter { get => _candidateKindFilter; set { if (Set(ref _candidateKindFilter, value)) RefreshCandidates(); } }
+    public string CandidateAddedFilter { get => _candidateAddedFilter; set { if (Set(ref _candidateAddedFilter, value)) RefreshCandidates(); } }
+    public string CandidateDriveFilter { get => _candidateDriveFilter; set { if (Set(ref _candidateDriveFilter, value)) RefreshCandidates(); } }
     public string StatusMessage { get => _statusMessage; set => Set(ref _statusMessage, value); }
     public bool HideAddedCandidates { get => _hideAddedCandidates; set { if (Set(ref _hideAddedCandidates, value)) RefreshCandidates(); } }
     public GameItem? SelectedGame { get => _selectedGame; set => Set(ref _selectedGame, value); }
     public ScanPathItem? SelectedScanPath { get => _selectedScanPath; set => Set(ref _selectedScanPath, value); }
-    public ScanCandidate? SelectedCandidate { get => _selectedCandidate; set => Set(ref _selectedCandidate, value); }
     public GameDiskItem? SelectedGameDisk { get => _selectedGameDisk; set => Set(ref _selectedGameDisk, value); }
+    public OperationTaskItem? SelectedTask { get => _selectedTask; set => Set(ref _selectedTask, value); }
 
     public ICommand AddScanPathCommand { get; }
     public ICommand RemoveScanPathCommand { get; }
+    public ICommand RelocateScanPathCommand { get; }
+    public ICommand ToggleScanPathCommand { get; }
     public ICommand ScanCommand { get; }
+    public ICommand CancelScanCommand { get; }
     public ICommand AddCandidateToLibraryCommand { get; }
     public ICommand AddGameDiskCommand { get; }
     public ICommand RemoveGameDiskCommand { get; }
+    public ICommand EditGameDiskCommand { get; }
     public ICommand LaunchGameCommand { get; }
+    public ICommand OpenGameDetailsCommand { get; }
     public ICommand OpenGameFolderCommand { get; }
     public ICommand ReloadCommand { get; }
+    public ICommand OpenTaskFolderCommand { get; }
+    public ICommand CleanupTaskTempCommand { get; }
+    public ICommand OpenTaskGameCommand { get; }
+    public ICommand ShowTaskErrorCommand { get; }
 
     public MainViewModel()
     {
-        _state = _store.Load(); LoadCollections();
-        AddScanPathCommand = new RelayCommand(AddScanPath); RemoveScanPathCommand = new RelayCommand(RemoveScanPath);
-        ScanCommand = new AsyncRelayCommand(ScanAsync); AddCandidateToLibraryCommand = new RelayCommand(AddCandidateToLibrary);
-        AddGameDiskCommand = new RelayCommand(AddGameDisk); RemoveGameDiskCommand = new RelayCommand(RemoveGameDisk);
+        _state = _store.Load(); LoadCollections(); _store.Save(_state);
+        AddScanPathCommand = new RelayCommand(AddScanPath); RemoveScanPathCommand = new RelayCommand(RemoveScanPath); RelocateScanPathCommand = new RelayCommand(RelocateScanPath); ToggleScanPathCommand = new RelayCommand(ToggleScanPath);
+        ScanCommand = new AsyncRelayCommand(ScanAsync); AddCandidateToLibraryCommand = new AsyncRelayCommand<IList>(AddCandidatesToLibraryAsync);
+        CancelScanCommand = new RelayCommand(CancelScan);
+        AddGameDiskCommand = new RelayCommand(AddGameDisk); RemoveGameDiskCommand = new RelayCommand(RemoveGameDisk); EditGameDiskCommand = new RelayCommand(EditGameDisk);
+        OpenGameDetailsCommand = new RelayCommand(OpenSelectedGameDetails);
         LaunchGameCommand = new RelayCommand(LaunchGame); OpenGameFolderCommand = new RelayCommand(OpenGameFolder); ReloadCommand = new RelayCommand(Reload);
+        OpenTaskFolderCommand = new RelayCommand(OpenTaskFolder); CleanupTaskTempCommand = new RelayCommand(CleanupTaskTemp); OpenTaskGameCommand = new RelayCommand(OpenTaskGame); ShowTaskErrorCommand = new RelayCommand(ShowTaskError);
     }
 
     private void LoadCollections()
@@ -58,6 +91,7 @@ public sealed class MainViewModel : ObservableObject
         Games.Clear(); foreach (var item in _state.Games) Games.Add(item);
         ScanPaths.Clear(); foreach (var item in _state.ScanPaths) ScanPaths.Add(item);
         GameDisks.Clear(); foreach (var item in _state.GameDisks) GameDisks.Add(item);
+        Tasks.Clear(); foreach (var item in _state.OperationTasks.OrderByDescending(task => task.StartedAt)) Tasks.Add(item);
     }
 
     private static string? PickFolder(string title)
@@ -80,35 +114,141 @@ public sealed class MainViewModel : ObservableObject
         _state.ScanPaths.RemoveAll(x => x.Id == SelectedScanPath.Id); ScanPaths.Remove(SelectedScanPath); Save("扫描路径已删除");
     }
 
+    private void RelocateScanPath()
+    {
+        if (SelectedScanPath is null) return;
+        var path = PickFolder("重新定位扫描路径");
+        if (path is null || string.Equals(path, SelectedScanPath.Path, StringComparison.OrdinalIgnoreCase)) return;
+        if (ScanPaths.Any(item => item.Id != SelectedScanPath.Id && string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase))) { ShowError("该扫描路径已经存在。"); return; }
+        if (MessageBox.Show($"确定将扫描路径更新为：\n{path}", "重新定位确认", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        SelectedScanPath.Path = path; Save("扫描路径已重新定位"); CollectionViewSource.GetDefaultView(ScanPaths).Refresh();
+    }
+
+    private void ToggleScanPath()
+    {
+        if (SelectedScanPath is null) return;
+        SelectedScanPath.Enabled = !SelectedScanPath.Enabled; Save(SelectedScanPath.Enabled ? "扫描路径已启用" : "扫描路径已禁用"); CollectionViewSource.GetDefaultView(ScanPaths).Refresh();
+    }
+
     private async Task ScanAsync()
     {
-        var task = new OperationTaskItem { Name = "扫描原始游戏文件", Status = "运行中", Message = "正在扫描已启用路径" }; Tasks.Insert(0, task); StatusMessage = "正在扫描…";
+        var task = new OperationTaskItem { Name = "扫描原始游戏文件", TaskType = "文件扫描", Status = "运行中", Message = "正在扫描已启用路径" };
+        _state.OperationTasks.Add(task); Tasks.Insert(0, task); StatusMessage = "正在扫描…"; _store.Save(_state);
+        _scanCancellation = new CancellationTokenSource();
+        IsScanning = true; ScanProgress = 0; ScanProgressMessage = "正在统计扫描项目…";
         try
         {
-            var result = await _scanner.ScanAsync(ScanPaths, Games, CancellationToken.None);
-            Candidates.Clear(); foreach (var item in result) Candidates.Add(item); RefreshCandidates();
-            task.Status = "完成"; task.Progress = 100; task.Message = $"发现 {result.Count} 个候选项目"; Save($"扫描完成，共 {result.Count} 项");
+            var progress = new Progress<ScanProgressInfo>(value =>
+            {
+                ScanProgress = value.Percentage;
+                ScanProgressMessage = value.Total <= 0 ? "没有发现可扫描项目" : $"{value.Completed}/{value.Total}｜{value.CurrentPath}";
+                task.Progress = value.Percentage; task.CurrentPath = value.CurrentPath;
+            });
+            var result = await _scanner.ScanAsync(ScanPaths, Games, progress, _scanCancellation.Token);
+            Candidates.Clear(); foreach (var item in result) Candidates.Add(item); RefreshCandidateFilterOptions(); RefreshCandidates();
+            task.Status = "完成"; task.Progress = 100; task.Message = $"发现 {result.Count} 个候选项目"; task.CompletedAt = DateTime.Now; Save($"扫描完成，共 {result.Count} 项");
         }
-        catch (Exception ex) { task.Status = "失败"; task.Message = ex.Message; AppLogger.Error("扫描失败", ex); ShowError(ex.Message); }
+        catch (OperationCanceledException) { task.Status = "已取消"; task.Message = "用户取消了文件扫描。"; task.CompletedAt = DateTime.Now; StatusMessage = "扫描已取消"; }
+        catch (Exception ex) { task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; AppLogger.Error("扫描失败", ex); ShowError(ex.Message); }
+        finally { IsScanning = false; _scanCancellation.Dispose(); _scanCancellation = null; _store.Save(_state); }
+    }
+
+    private void CancelScan()
+    {
+        if (_scanCancellation is null || _scanCancellation.IsCancellationRequested) return;
+        ScanProgressMessage = "正在取消扫描，请稍候…"; _scanCancellation.Cancel();
     }
 
     private void RefreshCandidates()
     {
-        VisibleCandidates.Clear(); foreach (var item in Candidates.Where(c => !HideAddedCandidates || !c.Added)) VisibleCandidates.Add(item);
+        var query = Candidates.AsEnumerable();
+        if (HideAddedCandidates) query = query.Where(candidate => !candidate.Added);
+        if (!string.IsNullOrWhiteSpace(CandidateSearchText))
+            query = query.Where(candidate => candidate.Name.Contains(CandidateSearchText.Trim(), StringComparison.CurrentCultureIgnoreCase) || candidate.FullPath.Contains(CandidateSearchText.Trim(), StringComparison.CurrentCultureIgnoreCase));
+        if (CandidateKindFilter != "全部") query = query.Where(candidate => candidate.Kind == CandidateKindFilter);
+        if (CandidateAddedFilter == "未添加") query = query.Where(candidate => !candidate.Added);
+        if (CandidateAddedFilter == "已添加") query = query.Where(candidate => candidate.Added);
+        if (CandidateDriveFilter != "全部") query = query.Where(candidate => string.Equals(candidate.DriveName, CandidateDriveFilter, StringComparison.OrdinalIgnoreCase));
+        VisibleCandidates.Clear(); foreach (var item in query) VisibleCandidates.Add(item);
     }
 
-    private void AddCandidateToLibrary()
+    private void RefreshCandidateFilterOptions()
     {
-        if (SelectedCandidate is null) return;
-        var owner = Application.Current.MainWindow;
-        var dialog = new TextInputWindow("添加游戏", "请输入游戏名称或备注：", SelectedCandidate.Name) { Owner = owner };
-        if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.Value)) return;
-        var versionDialog = new TextInputWindow("添加版本", "请输入版本名称：", "初始版本") { Owner = owner };
-        if (versionDialog.ShowDialog() != true || string.IsNullOrWhiteSpace(versionDialog.Value)) return;
-        var version = new GameVersionItem { VersionName = versionDialog.Value.Trim(), SourcePath = SelectedCandidate.FullPath };
-        var game = new GameItem { DisplayName = dialog.Value.Trim(), Note = dialog.Value.Trim(), SourcePath = SelectedCandidate.FullPath, CurrentVersionId = version.Id, CurrentVersionName = version.VersionName, Versions = [version] };
-        Games.Add(game); _state.Games.Add(game); SelectedCandidate.Added = true; RefreshCandidates(); Save("游戏已添加到游戏库");
+        var selected = CandidateDriveFilter;
+        CandidateDriveOptions.Clear(); CandidateDriveOptions.Add("全部");
+        foreach (var drive in Candidates.Select(candidate => candidate.DriveName).Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(value => value)) CandidateDriveOptions.Add(drive);
+        CandidateDriveFilter = CandidateDriveOptions.Contains(selected) ? selected : "全部";
     }
+
+    private async Task AddCandidatesToLibraryAsync(IList? selectedItems)
+    {
+        if (selectedItems is null || selectedItems.Count == 0) return;
+        var selected = selectedItems.OfType<ScanCandidate>().Where(candidate => !candidate.Added).ToList();
+        if (selected.Count == 0) { StatusMessage = "所选项目均已存在于游戏库"; return; }
+
+        var owner = Application.Current.MainWindow;
+        var progressWindow = new PreparationProgressWindow("正在添加游戏") { Owner = owner };
+        using var cancellation = new CancellationTokenSource();
+        progressWindow.EnableCancellation(cancellation.Cancel);
+        var task = new OperationTaskItem { Name = $"添加 {selected.Count} 个游戏", TaskType = "来源指纹", Status = "运行中", Message = "正在计算原始来源指纹" };
+        _state.OperationTasks.Add(task); Tasks.Insert(0, task); _store.Save(_state);
+        owner.IsEnabled = false; progressWindow.Show();
+        try
+        {
+            var prepared = new List<(ScanCandidate Candidate, GameVersionItem Version)>();
+            for (var index = 0; index < selected.Count; index++)
+            {
+                var candidate = selected[index];
+                if (_state.Games.Any(game => string.Equals(NormalizePath(game.SourcePath), NormalizePath(candidate.FullPath), StringComparison.OrdinalIgnoreCase)))
+                {
+                    candidate.Added = true;
+                    continue;
+                }
+                progressWindow.UpdateStatus($"正在记录来源指纹（{index + 1}/{selected.Count}）：{candidate.Name}", index * 100 / selected.Count);
+                var metadataProgress = new Progress<SourceMetadataProgress>(value =>
+                {
+                    var overall = (index * 100 + value.Percentage) / selected.Count;
+                    task.Progress = overall; task.CurrentPath = value.CurrentPath; task.Message = $"正在记录来源指纹（{index + 1}/{selected.Count}）";
+                    progressWindow.UpdateStatus($"正在记录来源指纹（{index + 1}/{selected.Count}，{value.Percentage}%）：{value.CurrentPath}", overall);
+                });
+                var metadata = await SourceMetadataService.CaptureAsync(candidate.FullPath, metadataProgress, cancellation.Token);
+                var version = new GameVersionItem { VersionName = "初始版本", SourcePath = candidate.FullPath, SourceKind = candidate.Kind };
+                SourceMetadataService.Apply(version, metadata);
+                prepared.Add((candidate, version));
+            }
+
+            foreach (var item in prepared)
+            {
+                var displayName = GetCandidateDisplayName(item.Candidate);
+                var game = new GameItem
+                {
+                    DisplayName = displayName,
+                    Note = displayName,
+                    SourcePath = item.Candidate.FullPath,
+                    SourceKind = item.Candidate.Kind,
+                    CurrentVersionId = item.Version.Id,
+                    CurrentVersionName = item.Version.VersionName,
+                    Versions = [item.Version]
+                };
+                Games.Add(game); _state.Games.Add(game); item.Candidate.Added = true;
+            }
+
+            RefreshCandidates();
+            task.Status = "完成"; task.Progress = 100; task.Message = $"已添加 {prepared.Count} 个游戏并保存来源指纹"; task.CompletedAt = DateTime.Now;
+            Save(task.Message);
+        }
+        catch (OperationCanceledException) { task.Status = "已取消"; task.Message = "用户取消了来源指纹计算，未添加尚未完成的游戏。"; task.CompletedAt = DateTime.Now; StatusMessage = task.Message; }
+        catch (Exception ex) { task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; AppLogger.Error("添加游戏并记录来源指纹失败", ex); ShowError($"添加失败：{ex.Message}"); }
+        finally { _store.Save(_state); owner.IsEnabled = true; progressWindow.CloseSafely(); }
+    }
+
+    public static string GetCandidateDisplayName(ScanCandidate candidate)
+    {
+        if (candidate.Kind == SourceKinds.ArchiveFile) return Path.GetFileNameWithoutExtension(candidate.Name);
+        return candidate.Name;
+    }
+
+    private static string NormalizePath(string path) => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     private void AddGameDisk()
     {
@@ -117,14 +257,32 @@ public sealed class MainViewModel : ObservableObject
         var dialog = new TextInputWindow("添加游戏盘", "请输入游戏盘显示名称：", new DirectoryInfo(path).Name) { Owner = Application.Current.MainWindow };
         if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.Value)) return;
         foreach (var folder in new[] { "Games", "GameTemp", "GameSave", "GameSaveTemp" }) Directory.CreateDirectory(Path.Combine(path, folder));
-        var disk = new GameDiskItem { DisplayName = dialog.Value.Trim(), RootPath = path }; GameDisks.Add(disk); _state.GameDisks.Add(disk); Save("游戏盘已添加");
+        var disk = new GameDiskItem { DisplayName = dialog.Value.Trim(), RootPath = path, IsDefault = GameDisks.Count == 0 }; GameDisks.Add(disk); _state.GameDisks.Add(disk); Save("游戏盘已添加");
     }
 
     private void RemoveGameDisk()
     {
         if (SelectedGameDisk is null) return;
         if (MessageBox.Show($"仅删除游戏盘配置，不删除实际文件。是否继续？\n{SelectedGameDisk.RootPath}", "删除确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        _state.GameDisks.RemoveAll(x => x.Id == SelectedGameDisk.Id); GameDisks.Remove(SelectedGameDisk); Save("游戏盘配置已删除");
+        var wasDefault = SelectedGameDisk.IsDefault;
+        _state.GameDisks.RemoveAll(x => x.Id == SelectedGameDisk.Id); GameDisks.Remove(SelectedGameDisk);
+        if (wasDefault && GameDisks.Count > 0) GameDisks[0].IsDefault = true;
+        Save("游戏盘配置已删除");
+    }
+
+    private void EditGameDisk()
+    {
+        if (SelectedGameDisk is null) return;
+        var nameWindow = new TextInputWindow("编辑游戏盘", "请输入游戏盘显示名称：", SelectedGameDisk.DisplayName) { Owner = Application.Current.MainWindow };
+        if (nameWindow.ShowDialog() != true) return;
+        var thresholdWindow = new TextInputWindow("编辑游戏盘", "请输入最低保留空间（GB）：", Math.Max(0, SelectedGameDisk.MinimumFreeSpaceBytes / 1024d / 1024 / 1024).ToString("0.##")) { Owner = Application.Current.MainWindow };
+        if (thresholdWindow.ShowDialog() != true) return;
+        if (!double.TryParse(thresholdWindow.Value, out var thresholdGb) || thresholdGb < 0 || thresholdGb > 100000) { ShowError("最低保留空间必须是有效的非负数字。"); return; }
+        var setDefault = MessageBox.Show("是否将该游戏盘设为默认选择？", "默认游戏盘", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+        var enabled = MessageBox.Show("是否启用该游戏盘？", "游戏盘状态", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+        SelectedGameDisk.DisplayName = nameWindow.Value.Trim(); SelectedGameDisk.MinimumFreeSpaceBytes = (long)(thresholdGb * 1024 * 1024 * 1024); SelectedGameDisk.IsDefault = setDefault; SelectedGameDisk.Enabled = enabled;
+        if (setDefault) foreach (var disk in GameDisks.Where(disk => disk.Id != SelectedGameDisk.Id)) disk.IsDefault = false;
+        Save("游戏盘配置已更新"); CollectionViewSource.GetDefaultView(GameDisks).Refresh();
     }
 
     private void LaunchGame()
@@ -134,6 +292,15 @@ public sealed class MainViewModel : ObservableObject
         catch (Exception ex) { ShowError(ex.Message); }
     }
 
+    public void OpenSelectedGameDetails()
+    {
+        if (SelectedGame is null) { StatusMessage = "请先选择一个游戏"; return; }
+        var window = new GameDetailWindow(SelectedGame, _state, message => Save(message)) { Owner = Application.Current.MainWindow };
+        window.ShowDialog();
+        CollectionViewSource.GetDefaultView(Games).Refresh();
+        Tasks.Clear(); foreach (var item in _state.OperationTasks.OrderByDescending(task => task.StartedAt)) Tasks.Add(item);
+    }
+
     private void OpenGameFolder()
     {
         var path = SelectedGame?.PlayableRootPath;
@@ -141,7 +308,41 @@ public sealed class MainViewModel : ObservableObject
         ShellService.OpenFolder(path);
     }
 
-    private void Reload() { _state = _store.Load(); LoadCollections(); StatusMessage = "数据已刷新"; }
+    private void OpenTaskFolder()
+    {
+        var path = SelectedTask?.WorkingDirectory;
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) { ShowError("该任务没有可查看的临时目录。"); return; }
+        ShellService.OpenFolder(path);
+    }
+
+    private void CleanupTaskTemp()
+    {
+        var task = SelectedTask;
+        var path = task?.WorkingDirectory;
+        if (task is null || string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) { ShowError("该任务没有可清理的临时目录。"); return; }
+        if (!TemporaryDirectoryService.IsManagedTaskDirectory(path, GameDisks)) { ShowError("安全检查失败：该目录不属于已配置游戏盘的 GameTemp 或 GameSaveTemp 子目录。禁止删除。"); return; }
+        if (task.Status == "运行中") { ShowError("运行中的任务禁止清理临时目录。"); return; }
+        if (MessageBox.Show($"将永久删除任务临时目录，此操作不可恢复：\n{path}\n\n是否继续？", "清理临时目录确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        try { Directory.Delete(path, true); task.Message = "任务临时目录已由用户清理。"; task.WorkingDirectory = string.Empty; Save("任务临时目录已清理"); }
+        catch (Exception ex) { AppLogger.Error("清理任务临时目录失败", ex); ShowError($"清理失败：{ex.Message}"); }
+    }
+
+    private void OpenTaskGame()
+    {
+        if (SelectedTask?.GameId is not Guid gameId) { ShowError("该任务没有关联游戏。"); return; }
+        SelectedGame = Games.FirstOrDefault(game => game.Id == gameId);
+        if (SelectedGame is null) { ShowError("关联游戏记录不存在。"); return; }
+        OpenSelectedGameDetails();
+    }
+
+    private void ShowTaskError()
+    {
+        if (SelectedTask is null) return;
+        var detail = string.IsNullOrWhiteSpace(SelectedTask.ErrorMessage) ? SelectedTask.Message : SelectedTask.ErrorMessage;
+        MessageBox.Show(detail, $"任务详情 - {SelectedTask.Name}", MessageBoxButton.OK, SelectedTask.Status == "失败" ? MessageBoxImage.Error : MessageBoxImage.Information);
+    }
+
+    private void Reload() { _state = _store.Load(); LoadCollections(); _store.Save(_state); StatusMessage = "数据已刷新"; }
     private void Save(string message) { _store.Save(_state); StatusMessage = message; AppLogger.Info(message); }
     private static void ShowError(string message) => MessageBox.Show(message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
 }
