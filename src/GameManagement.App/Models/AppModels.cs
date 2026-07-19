@@ -55,10 +55,18 @@ public sealed class GameItem
     public string CurrentVersionName { get; set; } = string.Empty;
     public string? PlayableRootPath { get; set; }
     public string? ExecutableRelativePath { get; set; }
+    public string? IconRelativePath { get; set; }
     public Guid? CurrentGameDiskId { get; set; }
     public DateTime? LastPlayedAt { get; set; }
+    public DateTime? CurrentPlayStartedAt { get; set; }
+    public DateTime? LastExitedAt { get; set; }
+    public int? RunningProcessId { get; set; }
+    public int? LastExitCode { get; set; }
+    public long? LastRunDurationSeconds { get; set; }
     public List<GameVersionItem> Versions { get; set; } = [];
     [JsonIgnore] public string SourcePathStatus => File.Exists(SourcePath) || Directory.Exists(SourcePath) ? "有效" : "失效";
+    [JsonIgnore] public string? IconFullPath => string.IsNullOrWhiteSpace(IconRelativePath) ? null : System.IO.Path.Combine(AppPaths.Root, IconRelativePath);
+    [JsonIgnore] public string LastRunDurationText => LastRunDurationSeconds is long seconds ? TimeSpan.FromSeconds(seconds).ToString(@"hh\:mm\:ss") : "暂无记录";
 }
 
 public sealed class GameVersionItem

@@ -7,10 +7,12 @@ namespace GameManagement;
 public partial class ChoiceWindow : Window
 {
     public ChoiceItem? SelectedChoice => ChoiceGrid.SelectedItem as ChoiceItem;
+    public bool ManualSelectionRequested { get; private set; }
 
-    public ChoiceWindow(string title, string prompt, IEnumerable<ChoiceItem> choices)
+    public ChoiceWindow(string title, string prompt, IEnumerable<ChoiceItem> choices, bool allowManualSelection = false)
     {
         InitializeComponent(); Title = title; PromptText.Text = prompt; ChoiceGrid.ItemsSource = choices.ToList();
+        ManualButton.Visibility = allowManualSelection ? Visibility.Visible : Visibility.Collapsed;
         if (ChoiceGrid.Items.Count > 0) ChoiceGrid.SelectedIndex = 0;
     }
 
@@ -23,5 +25,11 @@ public partial class ChoiceWindow : Window
     private void ChoiceGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (SelectedChoice is not null) DialogResult = true;
+    }
+
+    private void Manual_Click(object sender, RoutedEventArgs e)
+    {
+        ManualSelectionRequested = true;
+        DialogResult = true;
     }
 }

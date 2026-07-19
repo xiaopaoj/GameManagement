@@ -84,6 +84,7 @@ public sealed class MainViewModel : ObservableObject
         OpenGameDetailsCommand = new RelayCommand(OpenSelectedGameDetails);
         LaunchGameCommand = new RelayCommand(LaunchGame); OpenGameFolderCommand = new RelayCommand(OpenGameFolder); ReloadCommand = new RelayCommand(Reload);
         OpenTaskFolderCommand = new RelayCommand(OpenTaskFolder); CleanupTaskTempCommand = new RelayCommand(CleanupTaskTemp); OpenTaskGameCommand = new RelayCommand(OpenTaskGame); ShowTaskErrorCommand = new RelayCommand(ShowTaskError);
+        GameProcessMonitorService.Restore(_state.Games, OnGameStateChanged);
     }
 
     private void LoadCollections()
@@ -288,14 +289,25 @@ public sealed class MainViewModel : ObservableObject
     private void LaunchGame()
     {
         if (SelectedGame is null) return;
-        try { ShellService.LaunchGame(SelectedGame); SelectedGame.Status = "运行中"; SelectedGame.LastPlayedAt = DateTime.Now; Save("游戏已启动"); }
+        try { GameProcessMonitorService.Launch(SelectedGame, OnGameStateChanged); }
         catch (Exception ex) { ShowError(ex.Message); }
+    }
+
+    private void OnGameStateChanged(GameItem game, string message)
+    {
+        Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            _store.Save(_state);
+            StatusMessage = message;
+            CollectionViewSource.GetDefaultView(Games).Refresh();
+            AppLogger.Info($"{game.DisplayName}：{message}");
+        });
     }
 
     public void OpenSelectedGameDetails()
     {
         if (SelectedGame is null) { StatusMessage = "请先选择一个游戏"; return; }
-        var window = new GameDetailWindow(SelectedGame, _state, message => Save(message)) { Owner = Application.Current.MainWindow };
+        var window = new GameDetailWindow(SelectedGame, _state, message => Save(message), OnGameStateChanged) { Owner = Application.Current.MainWindow };
         window.ShowDialog();
         CollectionViewSource.GetDefaultView(Games).Refresh();
         Tasks.Clear(); foreach (var item in _state.OperationTasks.OrderByDescending(task => task.StartedAt)) Tasks.Add(item);

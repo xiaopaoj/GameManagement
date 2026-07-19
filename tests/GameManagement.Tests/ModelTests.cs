@@ -434,6 +434,51 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 启动候选评分应优先目录同名主程序并降低辅助程序()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "ScoreGame");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var main = Path.Combine(root, "ScoreGame.exe");
+            var helper = Path.Combine(root, "UnityCrashHandler64.exe");
+            File.WriteAllBytes(main, new byte[32]);
+            File.WriteAllBytes(helper, new byte[128]);
+
+            var candidates = ExecutableDiscoveryService.ScoreCandidates(root, [helper, main]);
+
+            Assert.Equal(main, candidates[0].Path);
+            Assert.True(candidates[0].Score > candidates[1].Score);
+            Assert.True(candidates[1].IsExcluded);
+        }
+        finally { Directory.Delete(Directory.GetParent(root)!.FullName, true); }
+    }
+
+    [Fact]
+    public void 游戏运行状态应记录启动退出和持续时间()
+    {
+        var game = new GameItem { PlayableRootPath = Path.GetTempPath(), Status = "可游玩" };
+        var startedAt = new DateTime(2026, 7, 19, 20, 0, 0);
+
+        GameRuntimeStateService.MarkStarted(game, 1234, startedAt);
+        GameRuntimeStateService.MarkExited(game, 0, startedAt.AddMinutes(5));
+
+        Assert.Equal("可游玩", game.Status);
+        Assert.Equal(startedAt, game.LastPlayedAt);
+        Assert.Equal(startedAt.AddMinutes(5), game.LastExitedAt);
+        Assert.Equal(300, game.LastRunDurationSeconds);
+        Assert.Equal(0, game.LastExitCode);
+        Assert.Null(game.RunningProcessId);
+    }
+
+    [Fact]
+    public void 不存在的EXE不应生成图标缓存()
+    {
+        var result = IconExtractionService.ExtractToCache(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".exe"), Guid.NewGuid());
+        Assert.Null(result);
+    }
+
+    [Fact]
     public async Task 文件基线应包含相对路径大小和SHA256()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

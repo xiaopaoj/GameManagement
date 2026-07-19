@@ -1,7 +1,11 @@
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Media.Imaging;
 using GameManagement.Models;
 
 namespace GameManagement.Services;
@@ -31,6 +35,7 @@ public static class AppLogger
 public sealed class StateStore
 {
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
+    private static readonly object SaveSync = new();
     public AppState Load()
     {
         if (!File.Exists(AppPaths.StateFile)) return new AppState();
@@ -48,7 +53,15 @@ public sealed class StateStore
         }
         catch (Exception ex) { AppLogger.Error("读取数据文件失败", ex); throw new InvalidOperationException("读取软件数据失败，请检查 data 目录中的数据文件。", ex); }
     }
-    public void Save(AppState state) { var temp = AppPaths.StateFile + ".tmp"; File.WriteAllText(temp, JsonSerializer.Serialize(state, Options)); File.Move(temp, AppPaths.StateFile, true); }
+    public void Save(AppState state)
+    {
+        lock (SaveSync)
+        {
+            var temp = AppPaths.StateFile + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(state, Options));
+            File.Move(temp, AppPaths.StateFile, true);
+        }
+    }
 }
 
 public static class OperationTaskRecoveryService
@@ -387,10 +400,181 @@ public static partial class ArchiveVolumeService
 public static class ShellService
 {
     public static void OpenFolder(string path) => Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
-    public static void LaunchGame(GameItem game)
+    public static Process LaunchGame(GameItem game)
     {
         if (string.IsNullOrWhiteSpace(game.PlayableRootPath) || string.IsNullOrWhiteSpace(game.ExecutableRelativePath)) throw new InvalidOperationException("该游戏尚未配置可游玩目录或启动文件。");
         var executable = Path.Combine(game.PlayableRootPath, game.ExecutableRelativePath); if (!File.Exists(executable)) throw new FileNotFoundException("游戏启动文件不存在。", executable);
-        Process.Start(new ProcessStartInfo(executable) { WorkingDirectory = Path.GetDirectoryName(executable)!, UseShellExecute = true });
+        return Process.Start(new ProcessStartInfo(executable) { WorkingDirectory = Path.GetDirectoryName(executable)!, UseShellExecute = true })
+            ?? throw new InvalidOperationException("系统没有返回可监听的启动进程，游戏可能未成功启动。");
     }
+}
+
+public static class GameRuntimeStateService
+{
+    public static void MarkStarted(GameItem game, int processId, DateTime startedAt)
+    {
+        game.Status = "运行中";
+        game.RunningProcessId = processId;
+        game.CurrentPlayStartedAt = startedAt;
+        game.LastPlayedAt = startedAt;
+        game.LastExitCode = null;
+    }
+
+    public static void MarkExited(GameItem game, int? exitCode, DateTime exitedAt)
+    {
+        var startedAt = game.CurrentPlayStartedAt;
+        game.Status = string.IsNullOrWhiteSpace(game.PlayableRootPath) || !Directory.Exists(game.PlayableRootPath) ? "未准备" : "可游玩";
+        game.RunningProcessId = null;
+        game.CurrentPlayStartedAt = null;
+        game.LastExitedAt = exitedAt;
+        game.LastExitCode = exitCode;
+        game.LastRunDurationSeconds = startedAt.HasValue ? Math.Max(0, (long)(exitedAt - startedAt.Value).TotalSeconds) : null;
+    }
+}
+
+public static class GameProcessMonitorService
+{
+    private static readonly object Sync = new();
+    private static readonly Dictionary<Guid, Process> RunningProcesses = [];
+
+    public static void Launch(GameItem game, Action<GameItem, string> stateChanged)
+    {
+        lock (Sync)
+        {
+            if (IsTrackedProcessRunning(game.Id)) throw new InvalidOperationException("该游戏的主程序已经在运行。");
+        }
+
+        var process = ShellService.LaunchGame(game);
+        var startedAt = DateTime.Now;
+        GameRuntimeStateService.MarkStarted(game, process.Id, startedAt);
+        stateChanged(game, $"游戏已启动，正在监听主程序进程 {process.Id}。");
+        Track(game, process, stateChanged);
+    }
+
+    public static void Restore(IEnumerable<GameItem> games, Action<GameItem, string> stateChanged)
+    {
+        foreach (var game in games.Where(game => game.RunningProcessId.HasValue || game.Status == "运行中"))
+        {
+            if (game.RunningProcessId is not int processId)
+            {
+                GameRuntimeStateService.MarkExited(game, null, DateTime.Now);
+                stateChanged(game, $"已修正游戏“{game.DisplayName}”的过期运行状态。");
+                continue;
+            }
+
+            try
+            {
+                var process = Process.GetProcessById(processId);
+                if (process.HasExited || !MatchesRecordedProcess(game, process))
+                {
+                    process.Dispose();
+                    GameRuntimeStateService.MarkExited(game, null, DateTime.Now);
+                    stateChanged(game, $"检测到游戏“{game.DisplayName}”的主程序已经结束。");
+                    continue;
+                }
+                Track(game, process, stateChanged);
+            }
+            catch (ArgumentException)
+            {
+                GameRuntimeStateService.MarkExited(game, null, DateTime.Now);
+                stateChanged(game, $"检测到游戏“{game.DisplayName}”的主程序已经结束。");
+            }
+            catch (InvalidOperationException)
+            {
+                GameRuntimeStateService.MarkExited(game, null, DateTime.Now);
+                stateChanged(game, $"无法恢复游戏“{game.DisplayName}”的进程监听，已清理过期运行状态。");
+            }
+        }
+    }
+
+    private static void Track(GameItem game, Process process, Action<GameItem, string> stateChanged)
+    {
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => HandleExited(game, process, stateChanged);
+        lock (Sync)
+        {
+            if (RunningProcesses.Remove(game.Id, out var previous)) previous.Dispose();
+            RunningProcesses[game.Id] = process;
+        }
+        try { if (process.HasExited) HandleExited(game, process, stateChanged); }
+        catch (InvalidOperationException) { }
+    }
+
+    private static void HandleExited(GameItem game, Process process, Action<GameItem, string> stateChanged)
+    {
+        lock (Sync)
+        {
+            if (!RunningProcesses.TryGetValue(game.Id, out var tracked) || tracked.Id != process.Id) return;
+            RunningProcesses.Remove(game.Id);
+        }
+        int? exitCode = null;
+        try { exitCode = process.ExitCode; } catch { }
+        GameRuntimeStateService.MarkExited(game, exitCode, DateTime.Now);
+        process.Dispose();
+        stateChanged(game, exitCode is null ? "主游戏程序已退出。" : $"主游戏程序已退出，退出代码：{exitCode}。");
+    }
+
+    private static bool IsTrackedProcessRunning(Guid gameId)
+    {
+        if (!RunningProcesses.TryGetValue(gameId, out var process)) return false;
+        try { return !process.HasExited; }
+        catch { return false; }
+    }
+
+    private static bool MatchesRecordedProcess(GameItem game, Process process)
+    {
+        if (game.CurrentPlayStartedAt is DateTime recordedStart)
+        {
+            try
+            {
+                if (Math.Abs((process.StartTime - recordedStart).TotalSeconds) > 10) return false;
+            }
+            catch { return false; }
+        }
+        if (string.IsNullOrWhiteSpace(game.PlayableRootPath) || string.IsNullOrWhiteSpace(game.ExecutableRelativePath)) return false;
+        var expected = Path.GetFullPath(Path.Combine(game.PlayableRootPath, game.ExecutableRelativePath));
+        try { return string.Equals(Path.GetFullPath(process.MainModule?.FileName ?? string.Empty), expected, StringComparison.OrdinalIgnoreCase); }
+        catch { return true; }
+    }
+}
+
+public static class IconExtractionService
+{
+    public static string? ExtractToCache(string executablePath, Guid gameId)
+    {
+        if (!File.Exists(executablePath) || !Path.GetExtension(executablePath).Equals(".exe", StringComparison.OrdinalIgnoreCase)) return null;
+        var iconDirectory = Path.Combine(AppPaths.Data, "cache", "icons");
+        Directory.CreateDirectory(iconDirectory);
+        var outputPath = Path.Combine(iconDirectory, $"{gameId:N}.png");
+        var extracted = ExtractIconEx(executablePath, 0, out var largeIcon, out var smallIcon, 1);
+        var icon = largeIcon != IntPtr.Zero ? largeIcon : smallIcon;
+        if (extracted == 0 || icon == IntPtr.Zero) return null;
+        try
+        {
+            var source = Imaging.CreateBitmapSourceFromHIcon(icon, Int32Rect.Empty, BitmapSizeOptions.FromWidthAndHeight(64, 64));
+            source.Freeze();
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(source));
+            using var stream = File.Create(outputPath);
+            encoder.Save(stream);
+            return Path.GetRelativePath(AppPaths.Root, outputPath);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"提取游戏图标失败：{executablePath}", ex);
+            return null;
+        }
+        finally
+        {
+            if (largeIcon != IntPtr.Zero) DestroyIcon(largeIcon);
+            if (smallIcon != IntPtr.Zero && smallIcon != largeIcon) DestroyIcon(smallIcon);
+        }
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint ExtractIconEx(string fileName, int iconIndex, out IntPtr largeIcon, out IntPtr smallIcon, uint iconCount);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyIcon(IntPtr icon);
 }

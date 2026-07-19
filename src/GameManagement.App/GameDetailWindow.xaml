@@ -1,20 +1,21 @@
 <Window x:Class="GameManagement.GameDetailWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="游戏详情" Height="730" Width="920" MinHeight="650" MinWidth="780"
+        Title="游戏详情" Height="800" Width="920" MinHeight="700" MinWidth="780"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Background="#F4F6F8">
     <Grid Margin="18">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <StackPanel>
-            <TextBlock Text="{Binding DisplayName}" FontSize="26" FontWeight="SemiBold"/>
-            <TextBlock Text="{Binding Status, StringFormat=当前状态：{0}}" Foreground="#59636E" Margin="0,4,0,0"/>
-        </StackPanel>
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="72"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Width="60" Height="60" Background="White" BorderBrush="#DCE1E6" BorderThickness="1" CornerRadius="6"><Image Source="{Binding IconFullPath}" Stretch="Uniform" Margin="4"/></Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="{Binding DisplayName}" FontSize="26" FontWeight="SemiBold"/><TextBlock Text="{Binding Status, StringFormat=当前状态：{0}}" Foreground="#59636E" Margin="0,4,0,0"/></StackPanel>
+        </Grid>
 
         <Border Grid.Row="1" Background="White" BorderBrush="#DCE1E6" BorderThickness="1" Padding="16" Margin="0,16,0,12">
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <TextBlock Text="游戏 ID" FontWeight="SemiBold"/><TextBox Grid.Column="1" Text="{Binding Id}" IsReadOnly="True" BorderThickness="0" Background="Transparent"/>
                 <TextBlock Grid.Row="1" Text="当前版本" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding CurrentVersionName}" Margin="0,8,0,0"/>
@@ -23,9 +24,12 @@
                 <TextBlock Grid.Row="4" Text="可游玩目录" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBox Grid.Row="4" Grid.Column="1" Text="{Binding PlayableRootPath, TargetNullValue=尚未准备}" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap" Margin="0,8,0,0"/>
                 <TextBlock Grid.Row="5" Text="启动文件" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding ExecutableRelativePath, TargetNullValue=尚未设置}" Margin="0,8,0,0"/>
                 <TextBlock Grid.Row="6" Text="上次游玩" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding LastPlayedAt, TargetNullValue=暂无记录}" Margin="0,8,0,0"/>
-                <TextBlock Grid.Row="7" Text="备注" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding Note}" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                <TextBlock Grid.Row="8" Text="版本数量" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding Versions.Count}" Margin="0,8,0,0"/>
-                <TextBlock Grid.Row="9" Text="原始路径状态" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="9" Grid.Column="1" Text="{Binding SourcePathStatus}" Margin="0,8,0,0"/>
+                <TextBlock Grid.Row="7" Text="最近退出" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding LastExitedAt, TargetNullValue=暂无记录}" Margin="0,8,0,0"/>
+                <TextBlock Grid.Row="8" Text="最近时长" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding LastRunDurationText}" Margin="0,8,0,0"/>
+                <TextBlock Grid.Row="9" Text="退出代码" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="9" Grid.Column="1" Text="{Binding LastExitCode, TargetNullValue=暂无记录}" Margin="0,8,0,0"/>
+                <TextBlock Grid.Row="10" Text="备注" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="10" Grid.Column="1" Text="{Binding Note}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                <TextBlock Grid.Row="11" Text="版本数量" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="11" Grid.Column="1" Text="{Binding Versions.Count}" Margin="0,8,0,0"/>
+                <TextBlock Grid.Row="12" Text="原始路径状态" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="12" Grid.Column="1" Text="{Binding SourcePathStatus}" Margin="0,8,0,0"/>
             </Grid>
         </Border>
 

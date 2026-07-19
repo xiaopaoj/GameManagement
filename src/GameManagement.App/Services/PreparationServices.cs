@@ -254,17 +254,16 @@ public static class ExecutableDiscoveryService
                     .ToList();
             }
             catch (UnauthorizedAccessException) { continue; }
+            catch (IOException) { continue; }
 
             if (directExecutables.Any(path => !ExcludedNames.Contains(Path.GetFileName(path))))
             {
                 var launchFiles = directExecutables
-                    .Concat(Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
-                        .Where(path => Path.GetFileName(path).Equals("index.html", StringComparison.OrdinalIgnoreCase)))
+                    .Concat(EnumerateIndexFiles(directory))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(path => Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                    .ThenBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
                     .ToList();
-                return new GameLaunchDiscoveryResult(directory, launchFiles);
+                var candidates = ScoreCandidates(directory, launchFiles);
+                return new GameLaunchDiscoveryResult(directory, candidates);
             }
 
             try
@@ -275,9 +274,78 @@ public static class ExecutableDiscoveryService
         }
         return null;
     }
+
+    public static IReadOnlyList<GameLaunchCandidate> ScoreCandidates(string gameRoot, IEnumerable<string> launchFiles)
+    {
+        var directoryName = NormalizeName(new DirectoryInfo(gameRoot).Name);
+        var files = launchFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var largestExeSize = files.Where(IsExecutable).Select(GetFileSize).DefaultIfEmpty(0).Max();
+        var candidates = new List<GameLaunchCandidate>();
+        foreach (var path in files)
+        {
+            var fileName = Path.GetFileName(path);
+            var baseName = NormalizeName(Path.GetFileNameWithoutExtension(path));
+            var reasons = new List<string>();
+            var score = 0;
+            var excluded = IsExecutable(path) && ExcludedNames.Contains(fileName);
+            if (IsExecutable(path)) { score += 100; reasons.Add("EXE 启动文件"); }
+            else { score += 10; reasons.Add("网页入口"); }
+            if (!string.IsNullOrWhiteSpace(directoryName) && baseName.Equals(directoryName, StringComparison.OrdinalIgnoreCase)) { score += 80; reasons.Add("名称与游戏目录一致"); }
+            if (IsExecutable(path) && GetFileSize(path) == largestExeSize && largestExeSize > 0) { score += 25; reasons.Add("目录内体积最大的 EXE"); }
+            if (baseName.Contains("game", StringComparison.OrdinalIgnoreCase) || baseName.Contains("launch", StringComparison.OrdinalIgnoreCase) || baseName.Contains("start", StringComparison.OrdinalIgnoreCase)) { score += 20; reasons.Add("文件名包含常见启动关键词"); }
+            if (TryGetVersionDescription(path, out var description) && !string.IsNullOrWhiteSpace(description))
+            {
+                var normalizedDescription = NormalizeName(description);
+                if (!string.IsNullOrWhiteSpace(directoryName) && normalizedDescription.Contains(directoryName, StringComparison.OrdinalIgnoreCase)) { score += 30; reasons.Add("版本信息与目录名称相关"); }
+            }
+            if (excluded) { score -= 300; reasons.Add("属于辅助程序排除名单"); }
+            candidates.Add(new GameLaunchCandidate(path, score, reasons, excluded));
+        }
+        return candidates.OrderByDescending(candidate => candidate.Score)
+            .ThenBy(candidate => Path.GetExtension(candidate.Path).Equals(".exe", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(candidate => Path.GetFileName(candidate.Path), StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+    }
+
+    public static bool IsExcludedExecutable(string path) => ExcludedNames.Contains(Path.GetFileName(path));
+
+    private static IEnumerable<string> EnumerateIndexFiles(string directory)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
+                .Where(path => Path.GetFileName(path).Equals("index.html", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        catch (UnauthorizedAccessException) { return []; }
+        catch (IOException) { return []; }
+    }
+
+    private static bool IsExecutable(string path) => Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase);
+    private static long GetFileSize(string path) { try { return new FileInfo(path).Length; } catch { return 0; } }
+    private static string NormalizeName(string value) => new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+    private static bool TryGetVersionDescription(string path, out string description)
+    {
+        description = string.Empty;
+        if (!IsExecutable(path)) return false;
+        try
+        {
+            var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+            description = info.ProductName ?? info.FileDescription ?? string.Empty;
+            return true;
+        }
+        catch { return false; }
+    }
 }
 
-public sealed record GameLaunchDiscoveryResult(string GameRoot, IReadOnlyList<string> LaunchFiles);
+public sealed record GameLaunchCandidate(string Path, int Score, IReadOnlyList<string> Reasons, bool IsExcluded);
+
+public sealed record GameLaunchDiscoveryResult(string GameRoot, IReadOnlyList<GameLaunchCandidate> Candidates)
+{
+    public IReadOnlyList<string> LaunchFiles => Candidates.Select(candidate => candidate.Path).ToList();
+}
+
+public sealed record GameLaunchSelection(string GameRoot, string LaunchFile);
 
 public static class BaselineService
 {

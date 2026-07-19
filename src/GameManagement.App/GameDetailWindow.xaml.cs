@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows;
 using GameManagement.Models;
 using GameManagement.Services;
+using Microsoft.Win32;
 
 namespace GameManagement;
 
@@ -11,13 +12,15 @@ public partial class GameDetailWindow : Window
     private readonly GameItem _game;
     private readonly AppState _state;
     private readonly Action<string> _save;
+    private readonly Action<GameItem, string> _gameStateChanged;
 
-    public GameDetailWindow(GameItem game, AppState state, Action<string> save)
+    public GameDetailWindow(GameItem game, AppState state, Action<string> save, Action<GameItem, string> gameStateChanged)
     {
         InitializeComponent();
         _game = game;
         _state = state;
         _save = save;
+        _gameStateChanged = gameStateChanged;
         DataContext = game;
         Title = $"游戏详情 - {game.DisplayName}";
     }
@@ -173,11 +176,11 @@ public partial class GameDetailWindow : Window
 
             UpdatePreparationTask(task, progress, 75, "正在递归查找第一个有效 EXE 并确定游戏目录…", finalExtractionRoot, "等待确认游戏目录");
             var launchDiscovery = await Task.Run(() => ExecutableDiscoveryService.Discover(finalExtractionRoot, cancellation.Token), cancellation.Token);
-            if (launchDiscovery is null) throw new InvalidOperationException("解压结果中没有找到可用的 EXE 文件。");
             progress.Hide(); IsEnabled = true;
-            var launchFile = SelectLaunchFile(launchDiscovery.GameRoot, launchDiscovery.LaunchFiles);
-            if (launchFile is null) throw new OperationCanceledException("用户取消了启动文件选择。", cancellation.Token);
-            var selectedGameRoot = launchDiscovery.GameRoot;
+            var launchSelection = SelectLaunchFile(finalExtractionRoot, launchDiscovery);
+            if (launchSelection is null) throw new OperationCanceledException("用户取消了启动文件选择。", cancellation.Token);
+            var launchFile = launchSelection.LaunchFile;
+            var selectedGameRoot = launchSelection.GameRoot;
 
             IsEnabled = false; progress.Show(); UpdatePreparationTask(task, progress, 85, "正在整理最终游戏目录…", selectedGameRoot, "等待确认游戏目录");
             await SourceCopyService.CopyDirectoryAsync(selectedGameRoot, stagedFinal, cancellation.Token);
@@ -196,9 +199,12 @@ public partial class GameDetailWindow : Window
             _game.CurrentGameDiskId = disk.Id;
             _game.PlayableRootPath = finalTarget;
             _game.ExecutableRelativePath = Path.GetRelativePath(finalTarget, finalExecutable);
+            _game.IconRelativePath = IconExtractionService.ExtractToCache(finalExecutable, _game.Id);
+            ConfirmDirectoryNameAsNote(selectedGameRoot);
             _game.Status = "可游玩";
             task.Status = "完成"; task.Progress = 100; task.Message = $"游戏准备完成，共建立 {baselines.Count} 个文件基线"; task.CurrentPath = finalTarget; task.CompletedAt = DateTime.Now;
             _save(task.Message);
+            RefreshBindings();
 
             progress.UpdateStatus("正在自动清理成功任务的临时目录…", 100);
             try
@@ -240,13 +246,40 @@ public partial class GameDetailWindow : Window
     private void Snapshots_Click(object sender, RoutedEventArgs e) => ShowFeature("存档与快照", "查看当前存档、最近三个正常快照、最近三个异常快照和文件清单。");
     private void Versions_Click(object sender, RoutedEventArgs e) => OpenVersionManagement(null);
     private void Credentials_Click(object sender, RoutedEventArgs e) => new CredentialManagementWindow(_game, _state, _save) { Owner = this }.ShowDialog();
-    private void RecognizeGame_Click(object sender, RoutedEventArgs e) => ShowFeature("识别游戏目录", "递归查找第一个有效 EXE，以其所属文件夹作为游戏目录，然后展示该目录直属的全部 EXE 和 index.html 供用户选择启动文件。");
+    private async void RecognizeGame_Click(object sender, RoutedEventArgs e)
+    {
+        if (_game.Status == "运行中") { ShowError("游戏运行期间不允许修改启动文件。"); return; }
+        if (string.IsNullOrWhiteSpace(_game.PlayableRootPath) || !Directory.Exists(_game.PlayableRootPath)) { ShowError("可游玩目录不存在，请先准备游戏。"); return; }
+        try
+        {
+            IsEnabled = false;
+            var discovery = await Task.Run(() => ExecutableDiscoveryService.Discover(_game.PlayableRootPath));
+            IsEnabled = true;
+            var selection = SelectLaunchFile(_game.PlayableRootPath, discovery);
+            if (selection is null) return;
+            _game.ExecutableRelativePath = Path.GetRelativePath(_game.PlayableRootPath, selection.LaunchFile);
+            _game.IconRelativePath = IconExtractionService.ExtractToCache(selection.LaunchFile, _game.Id);
+            ConfirmDirectoryNameAsNote(selection.GameRoot);
+            _save("游戏目录、启动文件和图标已重新识别");
+            RefreshBindings();
+        }
+        catch (Exception ex) { AppLogger.Error("重新识别游戏启动文件失败", ex); ShowError(ex.Message); }
+        finally { IsEnabled = true; }
+    }
     private void RelocateSource_Click(object sender, RoutedEventArgs e) => OpenVersionManagement(_game.CurrentVersionId);
     private void DeleteSource_Click(object sender, RoutedEventArgs e) => ShowFeature("删除原始文件", "该操作最终需要两次人工确认，并且只能将原始压缩文件和相关分卷移入 Windows 回收站。");
 
     private void Launch_Click(object sender, RoutedEventArgs e)
     {
-        try { ShellService.LaunchGame(_game); }
+        try
+        {
+            GameProcessMonitorService.Launch(_game, (game, message) =>
+            {
+                _gameStateChanged(game, message);
+                Dispatcher.BeginInvoke(() => { if (IsLoaded) RefreshBindings(); });
+            });
+            RefreshBindings();
+        }
         catch (Exception ex) { MessageBox.Show(ex.Message, "启动失败", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
@@ -314,15 +347,56 @@ public partial class GameDetailWindow : Window
 
     private static bool PathsEqual(string left, string right) => string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
 
-    private string? SelectLaunchFile(string rootDirectory, IReadOnlyList<string> launchFiles)
+    private GameLaunchSelection? SelectLaunchFile(string searchRoot, GameLaunchDiscoveryResult? discovery)
     {
-        var choices = launchFiles.Select(path => new ChoiceItem
+        if (discovery is null)
         {
-            Name = Path.GetFileName(path),
-            Description = $"{(Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase) ? "EXE" : "网页入口")}｜{Models.SizeFormatter.Format(new FileInfo(path).Length)}｜{Path.GetRelativePath(rootDirectory, path)}",
-            Value = path
+            if (MessageBox.Show("自动识别没有找到有效 EXE。是否手动选择 EXE 或 index.html？", "自动识别未找到结果", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return null;
+            return SelectManualLaunchFile(searchRoot);
+        }
+
+        var choices = discovery.Candidates.Select((candidate, index) => new ChoiceItem
+        {
+            Name = $"{(index == 0 ? "推荐｜" : string.Empty)}{Path.GetFileName(candidate.Path)}",
+            Description = $"评分 {candidate.Score}｜{string.Join("、", candidate.Reasons)}｜{Models.SizeFormatter.Format(new FileInfo(candidate.Path).Length)}｜{Path.GetRelativePath(discovery.GameRoot, candidate.Path)}",
+            Value = candidate.Path
         });
-        return SelectChoice("选择游戏启动文件", $"已确定游戏目录：\n{rootDirectory}\n\n请选择该目录直属的 EXE 或 index.html 作为启动文件：", choices)?.Value as string;
+        var window = new ChoiceWindow("选择游戏启动文件", $"已确定游戏目录：\n{discovery.GameRoot}\n\n候选按评分从高到低排列。请选择目录直属的 EXE/index.html，或手动选择文件：", choices, true) { Owner = this };
+        if (window.ShowDialog() != true) return null;
+        if (window.ManualSelectionRequested) return SelectManualLaunchFile(searchRoot);
+        return window.SelectedChoice?.Value is string launchFile ? new GameLaunchSelection(discovery.GameRoot, launchFile) : null;
+    }
+
+    private GameLaunchSelection? SelectManualLaunchFile(string searchRoot)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "手动选择游戏启动文件",
+            InitialDirectory = searchRoot,
+            Filter = "游戏启动文件 (*.exe;index.html)|*.exe;index.html|EXE 文件 (*.exe)|*.exe|网页入口 (index.html)|index.html",
+            Multiselect = false,
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) != true) return null;
+        var selectedPath = Path.GetFullPath(dialog.FileName);
+        if (!IsPathWithinRoot(searchRoot, selectedPath)) { ShowError("启动文件必须位于本次识别的游戏目录范围内。"); return null; }
+        var isValid = Path.GetExtension(selectedPath).Equals(".exe", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(selectedPath).Equals("index.html", StringComparison.OrdinalIgnoreCase);
+        if (!isValid) { ShowError("只允许选择 EXE 文件或文件名为 index.html 的网页入口。"); return null; }
+        return new GameLaunchSelection(Path.GetDirectoryName(selectedPath)!, selectedPath);
+    }
+
+    private void ConfirmDirectoryNameAsNote(string gameRoot)
+    {
+        if (!string.IsNullOrWhiteSpace(_game.Note)) return;
+        var directoryName = new DirectoryInfo(gameRoot).Name;
+        if (MessageBox.Show($"当前游戏备注为空，是否使用识别到的目录名称作为备注？\n\n{directoryName}", "确认游戏备注", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) _game.Note = directoryName;
+    }
+
+    private static bool IsPathWithinRoot(string root, string path)
+    {
+        var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var normalizedPath = Path.GetFullPath(path);
+        return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task ExtractWithCredentialAsync(GameVersionItem version, string archivePath, string outputDirectory, string title, PreparationProgressWindow progress, CancellationToken token, int stepOrder, string archiveRelativePath, bool allowPasswordRetry)
