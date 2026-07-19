@@ -1066,6 +1066,121 @@ public sealed class ModelTests
         Assert.NotNull(state.BackupSettings.PendingSince);
     }
 
+    [Fact]
+    public async Task 特殊归档完整基线比较应识别新增修改缺失和默认排除项()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var clean = Path.Combine(root, "clean");
+        var mixed = Path.Combine(root, "mixed");
+        Directory.CreateDirectory(clean); Directory.CreateDirectory(mixed);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(clean, "modified.sav"), "干净内容");
+            await File.WriteAllTextAsync(Path.Combine(clean, "missing.dat"), "将缺失");
+            File.Copy(Path.Combine(clean, "modified.sav"), Path.Combine(mixed, "modified.sav"));
+            await File.WriteAllTextAsync(Path.Combine(mixed, "modified.sav"), "混乱目录中的修改存档");
+            await File.WriteAllTextAsync(Path.Combine(mixed, "new.sav"), "新增存档");
+            await File.WriteAllTextAsync(Path.Combine(mixed, "resources.pak"), "资源内容");
+
+            var result = await SpecialArchiveComparisonService.CompareAsync(clean, mixed);
+
+            Assert.Contains(result, item => item.RelativePath == "modified.sav" && item.ChangeType == "修改");
+            Assert.Contains(result, item => item.RelativePath == "new.sav" && item.ChangeType == "新增");
+            Assert.Contains(result, item => item.RelativePath == "missing.dat" && item.ChangeType == "缺失" && item.DefaultExcluded);
+            Assert.Contains(result, item => item.RelativePath == "resources.pak" && item.DefaultExcluded && item.ExclusionReason.Contains("资源包"));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 无完整基线模式应将所有文件标记为人工选择且禁止自动结论()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "one.sav"), "一");
+            await File.WriteAllTextAsync(Path.Combine(root, "nested", "two.sav"), "二");
+
+            var result = await SpecialArchiveComparisonService.BuildManualSelectionAsync(root);
+
+            Assert.Equal(2, result.Count);
+            Assert.All(result, item =>
+            {
+                Assert.Equal("人工选择", item.ChangeType);
+                Assert.True(item.DefaultExcluded);
+                Assert.Contains("无完整基线", item.ExclusionReason);
+            });
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 特殊归档候选应能从独立混乱目录创建本地快照()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var mixed = Path.Combine(root, "mixed");
+        var diskRoot = Path.Combine(root, "disk");
+        Directory.CreateDirectory(mixed); Directory.CreateDirectory(diskRoot);
+        var disk = new GameDiskItem { RootPath = diskRoot };
+        var version = new GameVersionItem { VersionName = "特殊版本" };
+        var game = new GameItem { DisplayName = "特殊归档快照", CurrentVersionId = version.Id, CurrentSaveGameDiskId = disk.Id, Versions = [version] };
+        var state = new AppState { Games = [game], GameDisks = [disk] };
+        try
+        {
+            var source = Path.Combine(mixed, "save", "slot.sav");
+            Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+            await File.WriteAllTextAsync(source, "混乱目录存档");
+            var difference = new SpecialArchiveDifferenceItem { RelativePath = Path.Combine("save", "slot.sav"), SourcePath = source, ChangeType = "人工选择", FileSize = new FileInfo(source).Length, Sha256 = await FileFingerprintService.ComputeSha256Async(source) };
+            var candidates = SpecialArchiveComparisonService.CreateSaveCandidates(game, version, mixed, [difference]);
+            state.SaveCandidates.AddRange(candidates);
+
+            var result = await SaveSnapshotService.ApplyAndCreateAsync(state, game, [candidates[0].Id]);
+
+            Assert.True(result.ContentChanged);
+            Assert.True(File.Exists(Path.Combine(GameSavePathService.GetCurrentDirectory(state, game), "save", "slot.sav")));
+            Assert.Null(game.PlayableRootPath);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 原始文件删除解析应只包含主压缩包及相关分卷()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var part1 = Path.Combine(root, "game.part1.rar");
+            var part2 = Path.Combine(root, "game.part2.rar");
+            File.WriteAllText(part1, "1"); File.WriteAllText(part2, "2"); File.WriteAllText(Path.Combine(root, "other.zip"), "other");
+            var version = new GameVersionItem { SourcePath = root, FirstArchiveRelativePath = "game.part1.rar" };
+
+            var files = SourceDeletionService.ResolveSourceFiles(version);
+
+            Assert.Equal(2, files.Count);
+            Assert.Contains(part1, files);
+            Assert.Contains(part2, files);
+            Assert.DoesNotContain(Path.Combine(root, "other.zip"), files);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 游戏主记录存在关联数据时应禁止删除清空后允许删除()
+    {
+        var game = new GameItem { DisplayName = "待删除游戏", Versions = [new GameVersionItem()] };
+        var state = new AppState { Games = [game] };
+
+        Assert.Contains(GameRecordDeletionService.GetBlockers(state, game), item => item.Contains("版本"));
+
+        game.Versions.Clear();
+        Assert.Empty(GameRecordDeletionService.GetBlockers(state, game));
+        GameRecordDeletionService.Remove(state, game);
+        Assert.DoesNotContain(state.Games, item => item.Id == game.Id);
+        Assert.Contains(state.DeletionHistory, item => item.ObjectType == "游戏主记录" && item.Status == "成功");
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

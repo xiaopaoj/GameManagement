@@ -113,6 +113,13 @@ public static class RecycleBinService
         if (!Directory.Exists(path)) return;
         FileSystem.DeleteDirectory(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin, UICancelOption.ThrowException);
     }
+
+    public static void MoveFile(string path)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("当前系统不支持 Windows 回收站，操作已终止。");
+        if (!File.Exists(path)) return;
+        FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin, UICancelOption.ThrowException);
+    }
 }
 
 public static class CrossDiskSaveCopyService

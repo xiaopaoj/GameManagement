@@ -217,6 +217,7 @@ public static class ExternalBackupService
     {
         if (File.Exists(backup.FilePath)) File.Delete(backup.FilePath);
         state.ExternalBackups.RemoveAll(item => item.Id == backup.Id);
+        state.DeletionHistory.Add(new DeletionHistoryItem { GameId = backup.GameId, GameVersionId = backup.GameVersionId, ObjectType = "外部 ZIP 备份", ObjectPath = backup.FilePath, DeleteMethod = "永久删除", Status = "成功" });
         UpdateScheduledCleanupSuggestions(state);
     }
 

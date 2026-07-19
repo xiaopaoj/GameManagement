@@ -379,6 +379,8 @@ public sealed class MainViewModel : ObservableObject
 
     public void OpenBackupSchedule() => new BackupScheduleWindow(_state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();
 
+    public void OpenDeletionHistory() => new DeletionHistoryWindow(_state) { Owner = Application.Current.MainWindow }.ShowDialog();
+
     private async Task TryRunPendingBackupAsync()
     {
         if (!_state.BackupSettings.PendingScheduledBackup || BackupTargetService.Resolve(_state.BackupSettings, false) is null) return;
@@ -397,8 +399,7 @@ public sealed class MainViewModel : ObservableObject
         if (SelectedGame is null) { StatusMessage = "请先选择一个游戏"; return; }
         var window = new GameDetailWindow(SelectedGame, _state, message => Save(message), OnGameStateChanged) { Owner = Application.Current.MainWindow };
         window.ShowDialog();
-        CollectionViewSource.GetDefaultView(Games).Refresh();
-        Tasks.Clear(); foreach (var item in _state.OperationTasks.OrderByDescending(task => task.StartedAt)) Tasks.Add(item);
+        LoadCollections();
     }
 
     private void OpenGameFolder()

@@ -31,6 +31,7 @@
                 <Button Content="切换并准备" Click="SwitchAndPrepare_Click" Padding="14,8" Margin="4"/>
                 <Button Content="重新定位来源" Click="Relocate_Click" Padding="14,8" Margin="4"/>
                 <Button Content="打开原始位置" Click="OpenSource_Click" Padding="14,8" Margin="4"/>
+                <Button Content="删除版本记录" Click="DeleteVersion_Click" Padding="14,8" Margin="4"/>
             </WrapPanel>
         </DockPanel>
     </Grid>

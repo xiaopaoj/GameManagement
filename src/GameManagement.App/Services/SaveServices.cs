@@ -128,7 +128,7 @@ public static class SaveSnapshotService
         var candidates = state.SaveCandidates.Where(item => candidateIds.Contains(item.Id) && item.GameId == game.Id && item.Decision == SaveCandidateDecisions.Pending).ToList();
         if (candidates.Count == 0) throw new InvalidOperationException("没有选择可确认的存档候选。");
         if (candidates.Select(item => item.SnapshotKind).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1) throw new InvalidOperationException("一次只能处理同一种正常或异常快照候选。");
-        if (string.IsNullOrWhiteSpace(game.PlayableRootPath) || !Directory.Exists(game.PlayableRootPath)) throw new InvalidOperationException("可游玩目录不存在，无法收集存档文件。");
+        if (candidates.Any(item => item.ChangeType != "删除" && !Directory.Exists(string.IsNullOrWhiteSpace(item.SourceRootPath) ? game.PlayableRootPath : item.SourceRootPath))) throw new InvalidOperationException("候选存档缺少有效的来源根目录。");
 
         var saveRoot = GameSavePathService.GetGameSaveRoot(state, game);
         var currentDirectory = Path.Combine(saveRoot, "current");
@@ -153,7 +153,7 @@ public static class SaveSnapshotService
                 }
                 else
                 {
-                    var sourceRoot = candidate.SourceKind == "系统目录" ? candidate.SourceRootPath : game.PlayableRootPath;
+                    var sourceRoot = !string.IsNullOrWhiteSpace(candidate.SourceRootPath) ? candidate.SourceRootPath : game.PlayableRootPath;
                     if (string.IsNullOrWhiteSpace(sourceRoot)) throw new InvalidOperationException("候选文件缺少有效来源根目录。");
                     var source = GetSafeChildPath(sourceRoot, candidate.RelativePath);
                     if (!File.Exists(source)) throw new FileNotFoundException("待确认的存档候选已经不存在。", source);
@@ -290,6 +290,7 @@ public static class SaveSnapshotService
     {
         if (Directory.Exists(snapshot.DirectoryPath)) Directory.Delete(snapshot.DirectoryPath, true);
         state.SaveSnapshots.RemoveAll(item => item.Id == snapshot.Id);
+        state.DeletionHistory.Add(new DeletionHistoryItem { GameId = snapshot.GameId, GameVersionId = snapshot.GameVersionId, ObjectType = "本地存档快照", ObjectPath = snapshot.DirectoryPath, DeleteMethod = "永久删除", Status = "成功" });
         UpdateCleanupSuggestions(state, snapshot.GameId, snapshot.SnapshotKind);
     }
 

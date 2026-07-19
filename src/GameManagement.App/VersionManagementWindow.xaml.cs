@@ -138,6 +138,47 @@ public partial class VersionManagementWindow : Window
         else ShowError("原始文件或目录不存在，请执行重新定位。");
     }
 
+    private void DeleteVersion_Click(object sender, RoutedEventArgs e)
+    {
+        var version = SelectedVersion;
+        if (version is null) { ShowError("请先选择一个版本。"); return; }
+        if (_game.Status == "运行中") { ShowError("主游戏程序运行期间禁止删除版本记录。"); return; }
+        if (_game.CurrentVersionId == version.Id && !string.IsNullOrWhiteSpace(_game.PlayableRootPath) && Directory.Exists(_game.PlayableRootPath)) { ShowError("当前可游玩目录仍属于该版本，请先完成归档和目录清理。"); return; }
+        if (MessageBox.Show($"将删除版本数据库记录“{version.VersionName}”。是否继续？", "删除版本记录确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        var deleteSource = MessageBox.Show("是否同时将该版本的主压缩文件及相关分卷移入 Windows 回收站？\n\n“否”只删除版本记录并保留原始文件。", "原始文件处理", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+        if (deleteSource == MessageBoxResult.Cancel) return;
+        if (deleteSource == MessageBoxResult.Yes && !DeleteSourcesWithTwoConfirmations(version)) return;
+        if (deleteSource == MessageBoxResult.No && (File.Exists(version.SourcePath) || Directory.Exists(version.SourcePath))) _game.RetainedSourcePaths.Add(version.SourcePath);
+
+        _state.Credentials.RemoveAll(item => item.GameVersionId == version.Id);
+        _state.FileBaselines.RemoveAll(item => item.GameVersionId == version.Id);
+        _state.SaveCandidates.RemoveAll(item => item.GameVersionId == version.Id);
+        _game.Versions.RemoveAll(item => item.Id == version.Id);
+        _state.DeletionHistory.Add(new DeletionHistoryItem { GameId = _game.Id, GameVersionId = version.Id, ObjectType = "游戏版本记录", ObjectPath = version.VersionName, DeleteMethod = "数据库删除", Status = "成功", Message = deleteSource == MessageBoxResult.Yes ? "原始文件已进入回收站" : "原始文件已保留" });
+        if (_game.CurrentVersionId == version.Id)
+        {
+            var next = _game.Versions.FirstOrDefault();
+            if (next is null)
+            {
+                _game.CurrentVersionId = null; _game.CurrentVersionName = string.Empty; _game.SourcePath = string.Empty; _game.SourceKind = SourceKinds.Unknown; _game.Status = "待配置";
+            }
+            else ApplyCurrentVersion(next);
+        }
+        _save($"版本记录已删除：{version.VersionName}"); RefreshVersions();
+    }
+
+    private bool DeleteSourcesWithTwoConfirmations(GameVersionItem version)
+    {
+        var files = SourceDeletionService.ResolveSourceFiles(version);
+        if (files.Count == 0) { ShowError("无法定位主压缩文件及相关分卷，禁止删除原始文件。"); return false; }
+        var totalSize = files.Sum(path => { try { return new FileInfo(path).Length; } catch { return 0L; } });
+        if (MessageBox.Show($"第一次原始文件确认：\n游戏：{_game.DisplayName}\n版本：{version.VersionName}\n路径：{version.SourcePath}\n文件数：{files.Count}\n总体积：{SizeFormatter.Format(totalSize)}\n\n删除后可能无法再次准备，是否继续？", "原始文件风险确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return false;
+        var input = new TextInputWindow("第二次原始文件确认", $"请输入完整版本名称“{version.VersionName}”：", string.Empty) { Owner = this };
+        if (input.ShowDialog() != true || !input.Value.Equals(version.VersionName, StringComparison.Ordinal)) { ShowError("版本名称不匹配，删除操作已取消。"); return false; }
+        try { SourceDeletionService.MoveSourcesToRecycleBin(_state, _game, version, files); return true; }
+        catch (Exception ex) { ShowError($"原始文件未能全部进入回收站：{ex.Message}"); return false; }
+    }
+
     private async Task<bool> CaptureMetadataAsync(GameVersionItem version, string title)
     {
         var progressWindow = new PreparationProgressWindow(title) { Owner = this };

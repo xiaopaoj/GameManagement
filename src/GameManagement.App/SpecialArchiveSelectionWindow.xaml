@@ -1,0 +1,26 @@
+<Window x:Class="GameManagement.SpecialArchiveSelectionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="特殊归档文件确认" Height="680" Width="1120" MinHeight="520" MinWidth="900"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Background="#F4F6F8">
+    <Grid Margin="16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock Text="特殊归档差异与人工存档选择" FontSize="24" FontWeight="SemiBold"/>
+        <TextBlock x:Name="ModeText" Grid.Row="1" Margin="0,6,0,12" Foreground="#59636E" TextWrapping="Wrap"/>
+        <DataGrid x:Name="DifferenceGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="变化" Binding="{Binding ChangeType}" Width="80"/>
+                <DataGridTextColumn Header="选择状态" Binding="{Binding SelectableText}" Width="80"/>
+                <DataGridTextColumn Header="相对路径" Binding="{Binding RelativePath}" Width="3*"/>
+                <DataGridTextColumn Header="大小" Binding="{Binding FileSizeText}" Width="100"/>
+                <DataGridTextColumn Header="默认排除原因" Binding="{Binding ExclusionReason}" Width="2*"/>
+                <DataGridTextColumn Header="来源路径" Binding="{Binding SourcePath}" Width="3*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+        <DockPanel Grid.Row="3" Margin="0,12,0,0">
+            <Button DockPanel.Dock="Right" Content="取消" IsCancel="True" Padding="20,8" Margin="4"/>
+            <Button Content="将所选文件作为存档" Click="Confirm_Click" Padding="16,8" Margin="4"/>
+            <Button Content="预览所选文件" Click="Preview_Click" Padding="16,8" Margin="4"/>
+        </DockPanel>
+    </Grid>
+</Window>

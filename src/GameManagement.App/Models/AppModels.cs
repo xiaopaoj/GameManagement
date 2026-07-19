@@ -21,6 +21,7 @@ public sealed class AppState
     public List<SystemMonitorSessionItem> SystemMonitorSessions { get; set; } = [];
     public List<ExternalBackupItem> ExternalBackups { get; set; } = [];
     public BackupSettingsItem BackupSettings { get; set; } = new();
+    public List<DeletionHistoryItem> DeletionHistory { get; set; } = [];
     public List<OperationTaskItem> OperationTasks { get; set; } = [];
 }
 
@@ -82,6 +83,8 @@ public sealed class GameItem
     public Guid? ArchivedSnapshotId { get; set; }
     public string ArchivedContentFingerprint { get; set; } = string.Empty;
     public string ArchiveMessage { get; set; } = string.Empty;
+    public string SpecialArchiveBaselineStatus { get; set; } = string.Empty;
+    public List<string> RetainedSourcePaths { get; set; } = [];
     public List<GameVersionItem> Versions { get; set; } = [];
     [JsonIgnore] public string SourcePathStatus => File.Exists(SourcePath) || Directory.Exists(SourcePath) ? "有效" : "失效";
     [JsonIgnore] public string? IconFullPath => string.IsNullOrWhiteSpace(IconRelativePath) ? null : System.IO.Path.Combine(AppPaths.Root, IconRelativePath);
@@ -301,6 +304,33 @@ public sealed class ExternalBackupFileItem
     public string OriginalRestorePath { get; set; } = string.Empty;
     public long FileSize { get; set; }
     public string Sha256 { get; set; } = string.Empty;
+}
+
+public sealed class SpecialArchiveDifferenceItem
+{
+    public string RelativePath { get; set; } = string.Empty;
+    public string SourcePath { get; set; } = string.Empty;
+    public string ChangeType { get; set; } = string.Empty;
+    public long FileSize { get; set; }
+    public DateTime? ModifiedAt { get; set; }
+    public string Sha256 { get; set; } = string.Empty;
+    public bool DefaultExcluded { get; set; }
+    public string ExclusionReason { get; set; } = string.Empty;
+    [JsonIgnore] public string FileSizeText => SizeFormatter.Format(FileSize);
+    [JsonIgnore] public string SelectableText => ChangeType is "新增" or "修改" or "人工选择" ? "可选择" : "仅查看";
+}
+
+public sealed class DeletionHistoryItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid? GameId { get; set; }
+    public Guid? GameVersionId { get; set; }
+    public string ObjectType { get; set; } = string.Empty;
+    public string ObjectPath { get; set; } = string.Empty;
+    public string DeleteMethod { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
 }
 
 public sealed class SystemSaveDirectoryRuleItem

@@ -37,6 +37,6 @@ public partial class MainWindow : Window
     private void BackupCleanup_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenBackupManagement("建议清理"); }
     private void TaskHistory_Click(object sender, RoutedEventArgs e) => ShowFeature("任务历史", "查询复制、解压、Hash、存档和清理任务的执行记录。");
     private void BackupHistory_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenBackupManagement(); }
-    private void DeleteHistory_Click(object sender, RoutedEventArgs e) => ShowFeature("删除历史", "查询进入回收站、永久清理临时目录及数据库记录删除的历史。");
+    private void DeleteHistory_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenDeletionHistory(); }
     private void OpenLogs_Click(object sender, RoutedEventArgs e) => ShellService.OpenFolder(AppPaths.Logs);
 }

@@ -277,7 +277,114 @@ public partial class GameDetailWindow : Window
         }
     }
     private async void Archive_Click(object sender, RoutedEventArgs e) => await ArchiveCurrentAsync(false);
-    private void SpecialArchive_Click(object sender, RoutedEventArgs e) => ShowFeature("特殊归档", "选择已有的混乱游戏目录，与从原始压缩文件构建的干净基准目录比较后提取存档。");
+    private async void SpecialArchive_Click(object sender, RoutedEventArgs e)
+    {
+        if (_game.Status == "运行中") { ShowError("主游戏程序运行期间禁止特殊归档。"); return; }
+        var versionChoice = SelectChoice("选择特殊归档版本", "请选择混乱目录对应的游戏版本：", _game.Versions.Select(item => new ChoiceItem { Name = item.VersionName, Description = item.SourcePath, Value = item }));
+        if (versionChoice?.Value is not GameVersionItem version) return;
+        var folderDialog = new OpenFolderDialog { Title = "选择需要特殊归档的混乱游戏目录", Multiselect = false };
+        if (folderDialog.ShowDialog(this) != true) return;
+        var mixedRoot = folderDialog.FolderName;
+        var disks = _state.GameDisks.Where(item => item.Enabled && Directory.Exists(item.RootPath)).OrderByDescending(item => item.IsDefault).ThenBy(item => item.DisplayName).ToList();
+        var diskChoice = SelectChoice("选择特殊归档操作盘", "请选择用于 GameSaveTemp 和本地存档的游戏盘：", disks.Select(item => new ChoiceItem { Name = item.DisplayName, Description = item.RootPath, Value = item }));
+        if (diskChoice?.Value is not GameDiskItem disk) return;
+        if (_game.HasLocalSave && CrossDiskSaveCopyService.RequiresCopy(_state, _game, disk))
+        {
+            if (CrossDiskSaveCopyService.TargetCurrentExists(_game, disk)
+                && MessageBox.Show("目标游戏盘已有该游戏 current，特殊归档前将保留来源并覆盖目标 current。是否继续？", "跨盘存档覆盖确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            try { await CrossDiskSaveCopyService.CopyAsync(_state, _game, disk); }
+            catch (Exception ex) { ShowError($"复制主存档失败：{ex.Message}"); return; }
+        }
+        else if (!_game.HasLocalSave) _game.CurrentSaveGameDiskId = disk.Id;
+
+        var workRoot = Path.Combine(disk.RootPath, "GameSaveTemp", _game.Id.ToString(), version.Id.ToString(), Guid.NewGuid().ToString("N"));
+        var task = new OperationTaskItem { Name = $"特殊归档：{_game.DisplayName}", TaskType = "特殊归档", GameId = _game.Id, GameVersionId = version.Id, Status = "运行中", Message = "正在初始化特殊归档", WorkingDirectory = workRoot, CurrentPath = mixedRoot };
+        _state.OperationTasks.Add(task); _save("特殊归档任务已创建");
+        using var cancellation = new CancellationTokenSource();
+        var progress = new PreparationProgressWindow("正在执行特殊归档") { Owner = this };
+        progress.EnableCancellation(cancellation.Cancel);
+        IsEnabled = false; progress.Show();
+        try
+        {
+            Directory.CreateDirectory(workRoot);
+            string? cleanRoot = null;
+            Exception? baselineError = null;
+            try { cleanRoot = await BuildSpecialCleanDirectoryAsync(version, workRoot, task, progress, cancellation.Token); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { baselineError = ex; AppLogger.Error("特殊归档无法建立完整干净基线", ex); }
+
+            List<SpecialArchiveDifferenceItem> differences;
+            var completeBaseline = cleanRoot is not null && Directory.Exists(cleanRoot);
+            if (completeBaseline)
+            {
+                task.Progress = 65; task.Message = "正在比较干净基线与混乱目录"; progress.UpdateStatus(task.Message, 65);
+                differences = await SpecialArchiveComparisonService.CompareAsync(cleanRoot!, mixedRoot, cancellation.Token);
+                _game.SpecialArchiveBaselineStatus = "完整基线";
+            }
+            else
+            {
+                progress.Hide(); IsEnabled = true;
+                if (MessageBox.Show($"无法从原始压缩文件建立完整基线：\n{baselineError?.Message}\n\n是否进入“无完整基线”人工选择模式？软件不会自动判断，也不会在备份完成前删除目录。", "无完整基线", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) throw new OperationCanceledException("用户取消了无完整基线人工选择模式。", cancellation.Token);
+                IsEnabled = false; progress.Show();
+                differences = await SpecialArchiveComparisonService.BuildManualSelectionAsync(mixedRoot, cancellation.Token);
+                _game.SpecialArchiveBaselineStatus = "无完整基线";
+            }
+
+            progress.Hide(); IsEnabled = true;
+            var selectionWindow = new SpecialArchiveSelectionWindow(differences, completeBaseline) { Owner = this };
+            if (selectionWindow.ShowDialog() != true) throw new OperationCanceledException("用户取消了特殊归档文件选择。", cancellation.Token);
+            IsEnabled = false; progress.Show();
+            var candidates = SpecialArchiveComparisonService.CreateSaveCandidates(_game, version, mixedRoot, selectionWindow.SelectedFiles);
+            _state.SaveCandidates.RemoveAll(item => item.GameId == _game.Id && item.SourceKind == "游戏目录");
+            _state.SaveCandidates.AddRange(candidates);
+            task.Progress = 78; task.Message = $"正在创建并校验本地存档快照，共 {candidates.Count} 个文件"; progress.UpdateStatus(task.Message, 78);
+            var snapshotResult = await SaveSnapshotService.ApplyAndCreateAsync(_state, _game, candidates.Select(item => item.Id).ToList(), cancellation.Token);
+            _save("特殊归档本地存档快照已创建并校验");
+
+            progress.Hide(); IsEnabled = true;
+            if (MessageBox.Show("特殊归档的本地存档已经保存。归档前必须为最新 current 创建有效外部 ZIP 备份，是否立即执行手动备份？", "外部备份确认", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) throw new InvalidOperationException("最新存档尚未完成外部 ZIP 备份，混乱目录不会删除。");
+            IsEnabled = false; progress.Show();
+            task.Progress = 88; task.Message = "正在创建并校验外部 ZIP 备份"; progress.UpdateStatus(task.Message, 88);
+            await ExternalBackupService.CreateManualGameBackupAsync(_state, _game, cancellation.Token);
+            var manifest = await CurrentSaveManifestService.LoadAsync(_state, _game, cancellation.Token) ?? throw new InvalidDataException("特殊归档 current 清单不存在。");
+            var backupValid = _state.ExternalBackups.Any(item => item.GameId == _game.Id && item.Verified && File.Exists(item.FilePath) && item.ContentFingerprint.Equals(manifest.ContentFingerprint, StringComparison.OrdinalIgnoreCase));
+            if (!backupValid) throw new InvalidDataException("特殊归档外部 ZIP 备份校验状态无效。");
+            OrdinaryArchiveService.MarkArchived(_game, manifest);
+            _game.ArchiveMessage = $"特殊归档完成；基线状态：{_game.SpecialArchiveBaselineStatus}。";
+            _save("特殊归档及外部备份已完成");
+
+            progress.Hide(); IsEnabled = true;
+            if (MessageBox.Show($"特殊归档已完成。是否将所选混乱游戏目录移入 Windows 回收站？\n\n{mixedRoot}", "特殊归档目录清理确认", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                try
+                {
+                    RecycleBinService.MoveDirectory(mixedRoot);
+                    _state.DeletionHistory.Add(new DeletionHistoryItem { GameId = _game.Id, GameVersionId = version.Id, ObjectType = "特殊归档混乱目录", ObjectPath = mixedRoot, DeleteMethod = "Windows 回收站", Status = "成功" });
+                    if (PathsEqual(_game.PlayableRootPath, mixedRoot)) OrdinaryArchiveService.MarkCleanupSucceeded(_game);
+                }
+                catch (Exception ex)
+                {
+                    _state.DeletionHistory.Add(new DeletionHistoryItem { GameId = _game.Id, GameVersionId = version.Id, ObjectType = "特殊归档混乱目录", ObjectPath = mixedRoot, DeleteMethod = "Windows 回收站", Status = "失败", Message = ex.Message });
+                    OrdinaryArchiveService.MarkCleanupFailed(_game, ex.Message);
+                    MessageBox.Show($"特殊归档和备份已经完成，但混乱目录未能进入回收站：{ex.Message}", "目录清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            IsEnabled = false; progress.Show();
+            task.Status = "完成"; task.Progress = 100; task.Message = $"特殊归档完成，{_game.SpecialArchiveBaselineStatus}"; task.CompletedAt = DateTime.Now;
+            if (Directory.Exists(workRoot)) Directory.Delete(workRoot, true);
+            task.WorkingDirectory = string.Empty; _save(task.Message); RefreshBindings();
+            MessageBox.Show(task.Message, "特殊归档完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (OperationCanceledException ex)
+        {
+            task.Status = "已取消"; task.Message = "特殊归档已取消，临时目录已保留。"; task.ErrorMessage = ex.Message; task.CompletedAt = DateTime.Now; _save(task.Message);
+        }
+        catch (Exception ex)
+        {
+            task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; _save("特殊归档失败，临时目录已保留"); AppLogger.Error($"特殊归档失败：{_game.DisplayName}", ex); ShowError(ex.Message);
+        }
+        finally { IsEnabled = true; progress.CloseSafely(); RefreshBindings(); }
+    }
     private async void ManualBackup_Click(object sender, RoutedEventArgs e)
     {
         var progress = new PreparationProgressWindow("正在创建并校验单游戏无密码 ZIP 备份") { Owner = this };
@@ -323,7 +430,42 @@ public partial class GameDetailWindow : Window
         finally { IsEnabled = true; }
     }
     private void RelocateSource_Click(object sender, RoutedEventArgs e) => OpenVersionManagement(_game.CurrentVersionId);
-    private void DeleteSource_Click(object sender, RoutedEventArgs e) => ShowFeature("删除原始文件", "该操作最终需要两次人工确认，并且只能将原始压缩文件和相关分卷移入 Windows 回收站。");
+    private void DeleteSource_Click(object sender, RoutedEventArgs e)
+    {
+        var choice = SelectChoice("选择删除原始文件的版本", "请选择需要将原始压缩包及相关分卷移入回收站的版本：", _game.Versions.Select(item => new ChoiceItem { Name = item.VersionName, Description = item.SourcePath, Value = item }));
+        if (choice?.Value is not GameVersionItem version) return;
+        if (!DeleteVersionSourcesWithConfirmation(version)) return;
+        if (_game.CurrentVersionId == version.Id && !File.Exists(version.SourcePath) && !Directory.Exists(version.SourcePath)) _game.Status = "源文件失效";
+        _save($"版本“{version.VersionName}”的原始压缩文件已移入回收站"); RefreshBindings();
+    }
+
+    private bool DeleteVersionSourcesWithConfirmation(GameVersionItem version)
+    {
+        var files = SourceDeletionService.ResolveSourceFiles(version);
+        if (files.Count == 0) { ShowError("无法定位主压缩文件及相关分卷，禁止删除。请先重新定位原始来源。"); return false; }
+        var totalSize = files.Sum(path => { try { return new FileInfo(path).Length; } catch { return 0L; } });
+        var detail = string.Join("\n", files.Take(12));
+        if (files.Count > 12) detail += $"\n……另有 {files.Count - 12} 个文件";
+        if (MessageBox.Show($"第一次确认：删除后该版本可能无法再次准备。\n\n游戏：{_game.DisplayName}\n版本：{version.VersionName}\n原始路径：{version.SourcePath}\n文件数量：{files.Count}\n总体积：{Models.SizeFormatter.Format(totalSize)}\n\n将进入回收站的文件：\n{detail}\n\n是否继续？", "删除原始文件风险确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return false;
+        var input = new TextInputWindow("第二次确认", $"请输入完整版本名称“{version.VersionName}”以确认将原始压缩包和分卷移入 Windows 回收站：", string.Empty) { Owner = this };
+        if (input.ShowDialog() != true || !input.Value.Equals(version.VersionName, StringComparison.Ordinal)) { ShowError("版本名称不匹配，删除操作已取消。"); return false; }
+        try { SourceDeletionService.MoveSourcesToRecycleBin(_state, _game, version, files); return true; }
+        catch (Exception ex) { ShowError($"原始文件未能全部进入回收站：{ex.Message}\n\n软件不会降级为永久删除。"); return false; }
+    }
+
+    private void DeleteGameRecord_Click(object sender, RoutedEventArgs e)
+    {
+        var blockers = GameRecordDeletionService.GetBlockers(_state, _game);
+        if (blockers.Count > 0)
+        {
+            MessageBox.Show($"删除游戏主记录前必须先清空所有关联数据：\n\n- {string.Join("\n- ", blockers)}", "禁止删除游戏记录", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        var input = new TextInputWindow("删除游戏主记录", $"此操作只删除数据库中的游戏主记录。请输入完整游戏名称“{_game.DisplayName}”确认：", string.Empty) { Owner = this };
+        if (input.ShowDialog() != true || !input.Value.Equals(_game.DisplayName, StringComparison.Ordinal)) { ShowError("游戏名称不匹配，删除操作已取消。"); return; }
+        try { GameRecordDeletionService.Remove(_state, _game); _save("游戏主记录已删除"); DialogResult = true; }
+        catch (Exception ex) { ShowError(ex.Message); }
+    }
 
     private async void Launch_Click(object sender, RoutedEventArgs e)
     {
@@ -429,12 +571,14 @@ public partial class GameDetailWindow : Window
             try
             {
                 RecycleBinService.MoveDirectory(playable);
+                _state.DeletionHistory.Add(new DeletionHistoryItem { GameId = _game.Id, GameVersionId = _game.CurrentVersionId, ObjectType = "普通归档游戏目录", ObjectPath = playable, DeleteMethod = "Windows 回收站", Status = "成功" });
                 OrdinaryArchiveService.MarkCleanupSucceeded(_game);
                 task.Status = "完成"; task.Progress = 100; task.Message = "归档完成，游戏目录已移入回收站"; task.CompletedAt = DateTime.Now; _save(task.Message); RefreshBindings();
                 return true;
             }
             catch (Exception ex)
             {
+                _state.DeletionHistory.Add(new DeletionHistoryItem { GameId = _game.Id, GameVersionId = _game.CurrentVersionId, ObjectType = "普通归档游戏目录", ObjectPath = playable, DeleteMethod = "Windows 回收站", Status = "失败", Message = ex.Message });
                 OrdinaryArchiveService.MarkCleanupFailed(_game, ex.Message);
                 task.Status = "完成"; task.Progress = 100; task.Message = "归档完成，但游戏目录清理失败"; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; _save(task.Message); RefreshBindings();
                 MessageBox.Show($"存档归档已经完成，但目录未能移入回收站：{ex.Message}\n\n归档状态不受影响。", "目录清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -446,6 +590,57 @@ public partial class GameDetailWindow : Window
             task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now;
             _game.Status = "操作失败"; _save("普通归档失败"); RefreshBindings(); AppLogger.Error($"普通归档失败：{_game.DisplayName}", ex); ShowError(ex.Message); return false;
         }
+    }
+
+    private async Task<string> BuildSpecialCleanDirectoryAsync(GameVersionItem version, string workRoot, OperationTaskItem task, PreparationProgressWindow progress, CancellationToken token)
+    {
+        if (!File.Exists(version.SourcePath) && !Directory.Exists(version.SourcePath)) throw new FileNotFoundException("特殊归档版本的原始来源不存在。", version.SourcePath);
+        var sourceRoot = Path.Combine(workRoot, "source");
+        var step1 = Path.Combine(workRoot, "step1");
+        var step2 = Path.Combine(workRoot, "step2");
+        var clean = Path.Combine(workRoot, "clean");
+        task.Progress = 8; task.Message = "正在复制原始压缩文件到 GameSaveTemp"; task.CurrentPath = version.SourcePath; progress.UpdateStatus(task.Message, 8);
+        var copiedSource = await SourceCopyService.CopyToWorkDirectoryAsync(version.SourcePath, sourceRoot, token);
+        task.Progress = 18; task.Message = "正在扫描第一次解压候选"; progress.UpdateStatus(task.Message, 18);
+        var firstGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(copiedSource, token), token);
+        if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有找到第一次解压使用的 ZIP、RAR 或分卷组。");
+        progress.Hide(); IsEnabled = true;
+        var firstGroup = SelectArchiveGroupWithHistory("特殊归档：第一次解压", "请选择用于构建干净基线的第一次压缩文件：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压");
+        if (firstGroup is null) throw new OperationCanceledException("用户取消第一次解压选择。", token);
+        ConfirmMissingVolumes(firstGroup, "第一次解压");
+        IsEnabled = false; progress.Show();
+        task.Progress = 28; task.Message = "正在执行第一次解压"; task.CurrentPath = firstGroup.EntryPath; progress.UpdateStatus(task.Message, 28);
+        var firstRelative = GetArchiveRelativePath(copiedSource, firstGroup.EntryPath);
+        await ExtractWithCredentialAsync(version, firstGroup.EntryPath, step1, "特殊归档第一次解压密码", progress, token, 1, firstRelative, firstGroup.MissingFiles.Count == 0);
+
+        task.Progress = 38; task.Message = "正在扫描第二次解压候选"; task.CurrentPath = step1; progress.UpdateStatus(task.Message, 38);
+        var secondGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(step1, token), token);
+        if (secondGroups.Count > 0)
+        {
+            progress.Hide(); IsEnabled = true;
+            var secondGroup = SelectArchiveGroupWithHistory("特殊归档：第二次解压", "请选择用于构建干净基线的第二次压缩文件：", secondGroups, step1, version.SecondArchiveRelativePath, "第二次解压");
+            if (secondGroup is null) throw new OperationCanceledException("用户取消第二次解压选择。", token);
+            ConfirmMissingVolumes(secondGroup, "第二次解压");
+            IsEnabled = false; progress.Show();
+            var workingArchive = secondGroup.IsMultiVolume ? secondGroup.EntryPath : await ArchiveDiscoveryService.CreateNormalizedWorkingArchiveAsync(secondGroup.EntryPath, secondGroup.Format, token);
+            task.Progress = 48; task.Message = "正在执行第二次解压"; task.CurrentPath = workingArchive; progress.UpdateStatus(task.Message, 48);
+            await ExtractWithCredentialAsync(version, workingArchive, step2, "特殊归档第二次解压密码", progress, token, 2, Path.GetRelativePath(step1, secondGroup.EntryPath), secondGroup.MissingFiles.Count == 0);
+        }
+        else
+        {
+            var largest = await Task.Run(() => ArchiveDiscoveryService.FindLargestUnrecognizedFile(step1, token), token) ?? throw new InvalidOperationException("第一次解压结果中没有第二次压缩文件或可尝试的最大文件。");
+            task.Progress = 48; task.Message = "正在将最大混淆文件依次按 ZIP、RAR 尝试第二次解压"; task.CurrentPath = largest; progress.UpdateStatus(task.Message, 48);
+            await TryLargestFileAsArchiveAsync(version, largest, step2, progress, token, Path.GetRelativePath(step1, largest));
+        }
+
+        task.Progress = 56; task.Message = "正在识别干净游戏目录"; task.CurrentPath = step2; progress.UpdateStatus(task.Message, 56);
+        var discovery = await Task.Run(() => ExecutableDiscoveryService.Discover(step2, token), token);
+        progress.Hide(); IsEnabled = true;
+        var selection = SelectLaunchFile(step2, discovery) ?? throw new OperationCanceledException("用户取消干净游戏目录选择。", token);
+        IsEnabled = false; progress.Show();
+        task.Progress = 62; task.Message = "正在复制干净基准目录"; task.CurrentPath = selection.GameRoot; progress.UpdateStatus(task.Message, 62);
+        await SourceCopyService.CopyDirectoryAsync(selection.GameRoot, clean, token);
+        return clean;
     }
 
     private static void RollbackFinalCommit(string finalTarget, string stagedFinal, bool finalCommitted)
@@ -515,7 +710,7 @@ public partial class GameDetailWindow : Window
         return File.Exists(path) ? path : null;
     }
 
-    private static bool PathsEqual(string left, string right) => string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+    private static bool PathsEqual(string? left, string? right) => !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right) && string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
 
     private GameLaunchSelection? SelectLaunchFile(string searchRoot, GameLaunchDiscoveryResult? discovery)
     {

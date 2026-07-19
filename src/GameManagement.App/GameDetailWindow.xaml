@@ -66,6 +66,7 @@
                 <Button Content="识别游戏目录" Click="RecognizeGame_Click" Padding="14,8" Margin="4"/>
                 <Button Content="重新定位原始文件" Click="RelocateSource_Click" Padding="14,8" Margin="4"/>
                 <Button Content="删除原始文件" Click="DeleteSource_Click" Padding="14,8" Margin="4"/>
+                <Button Content="删除游戏主记录" Click="DeleteGameRecord_Click" Padding="14,8" Margin="4"/>
                 <Button Content="打开原始位置" Click="OpenSource_Click" Padding="14,8" Margin="4"/>
                 <Button Content="打开游戏目录" Click="OpenPlayable_Click" Padding="14,8" Margin="4"/>
             </WrapPanel>

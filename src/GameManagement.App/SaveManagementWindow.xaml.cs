@@ -200,5 +200,31 @@ public partial class SaveManagementWindow : Window
         catch (Exception ex) { AppLogger.Error("删除本地存档快照失败", ex); ShowError(ex.Message); }
     }
 
+    private void DeleteAllLocalSave_Click(object sender, RoutedEventArgs e)
+    {
+        var game = SelectedGame;
+        if (game is null) { ShowError("请先选择一个具体游戏。"); return; }
+        if (game.Status == "运行中") { ShowError("主游戏程序运行期间禁止清空本地存档。"); return; }
+        var roots = _state.GameDisks.Select(item => Path.Combine(item.RootPath, "GameSave", game.Id.ToString("N"))).Where(Directory.Exists).ToList();
+        var input = new TextInputWindow("清空全部本地存档", $"将永久删除该游戏在所有游戏盘上的 current、正常/异常快照和清单，并移除存档规则。此操作不可恢复。\n\n请输入完整游戏名称“{game.DisplayName}”确认：", string.Empty) { Owner = this };
+        if (input.ShowDialog() != true || !input.Value.Equals(game.DisplayName, StringComparison.Ordinal)) { ShowError("游戏名称不匹配，操作已取消。"); return; }
+        try
+        {
+            foreach (var root in roots) Directory.Delete(root, true);
+            _state.SaveSnapshots.RemoveAll(item => item.GameId == game.Id);
+            _state.SaveCandidates.RemoveAll(item => item.GameId == game.Id);
+            _state.SaveFileRules.RemoveAll(item => item.GameId == game.Id);
+            _state.SaveFileExclusions.RemoveAll(item => item.GameId == game.Id);
+            game.HasLocalSave = false; game.CurrentSaveGameDiskId = null;
+            _state.DeletionHistory.Add(new DeletionHistoryItem { GameId = game.Id, ObjectType = "游戏全部本地存档", ObjectPath = string.Join("；", roots), DeleteMethod = "永久删除", Status = "成功" });
+            _save("该游戏全部本地存档、快照和规则已清空"); RefreshLists();
+        }
+        catch (Exception ex)
+        {
+            _state.DeletionHistory.Add(new DeletionHistoryItem { GameId = game.Id, ObjectType = "游戏全部本地存档", ObjectPath = string.Join("；", roots), DeleteMethod = "永久删除", Status = "失败", Message = ex.Message });
+            AppLogger.Error("清空游戏全部本地存档失败", ex); ShowError($"清空操作未全部完成：{ex.Message}");
+        }
+    }
+
     private static void ShowError(string message) => MessageBox.Show(message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
 }
