@@ -827,6 +827,145 @@ public sealed class ModelTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public async Task 普通归档应要求当前存档校验和匹配的外部备份()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var diskRoot = Path.Combine(root, "disk");
+        var playable = Path.Combine(diskRoot, "Games", "game");
+        Directory.CreateDirectory(playable);
+        var disk = new GameDiskItem { RootPath = diskRoot };
+        var game = new GameItem { DisplayName = "归档检查", PlayableRootPath = playable, CurrentGameDiskId = disk.Id, CurrentSaveGameDiskId = disk.Id, CurrentVersionId = Guid.NewGuid(), SystemSaveInitialScanCompleted = true, Status = "可游玩" };
+        var state = new AppState { Games = [game], GameDisks = [disk] };
+        try
+        {
+            var saveRoot = GameSavePathService.GetGameSaveRoot(state, game);
+            var current = Path.Combine(saveRoot, "current");
+            Directory.CreateDirectory(current);
+            var save = Path.Combine(current, "slot.sav");
+            await File.WriteAllTextAsync(save, "存档内容");
+            var hash = await FileFingerprintService.ComputeSha256Async(save);
+            var manifest = new SaveSnapshotManifest
+            {
+                SnapshotId = Guid.NewGuid(), GameId = game.Id, GameVersionId = game.CurrentVersionId!.Value,
+                ContentFingerprint = "content-fingerprint",
+                Files = [new SaveSnapshotFileItem { RelativePath = "slot.sav", FileSize = new FileInfo(save).Length, Sha256 = hash }]
+            };
+            Directory.CreateDirectory(saveRoot);
+            await File.WriteAllTextAsync(Path.Combine(saveRoot, "manifest.json"), JsonSerializer.Serialize(manifest));
+
+            var missingBackup = await OrdinaryArchiveService.CheckReadinessAsync(state, game);
+            Assert.False(missingBackup.Ready);
+            Assert.Contains(missingBackup.Problems, item => item.Contains("外部 ZIP 备份"));
+
+            var backupPath = Path.Combine(root, "backup.zip");
+            await File.WriteAllTextAsync(backupPath, "测试备份");
+            state.ExternalBackups.Add(new ExternalBackupItem { GameId = game.Id, GameVersionId = game.CurrentVersionId, FilePath = backupPath, ContentFingerprint = manifest.ContentFingerprint, Verified = true, VerifiedAt = DateTime.Now });
+
+            var ready = await OrdinaryArchiveService.CheckReadinessAsync(state, game);
+            Assert.True(ready.Ready);
+            Assert.Equal(manifest.SnapshotId, ready.Manifest!.SnapshotId);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 归档状态与目录清理状态应相互独立()
+    {
+        var game = new GameItem { Status = "可游玩", PlayableRootPath = @"D:\Games\test", CurrentVersionId = Guid.NewGuid() };
+        var manifest = new SaveSnapshotManifest { SnapshotId = Guid.NewGuid(), ContentFingerprint = "fingerprint" };
+
+        OrdinaryArchiveService.MarkArchived(game, manifest);
+        OrdinaryArchiveService.MarkCleanupFailed(game, "文件占用");
+
+        Assert.Equal("已归档", game.ArchiveStatus);
+        Assert.Equal("已归档", game.Status);
+        Assert.Equal("清理失败", game.DirectoryCleanupStatus);
+        Assert.Equal("fingerprint", game.ArchivedContentFingerprint);
+        Assert.NotNull(game.ArchivedAt);
+    }
+
+    [Fact]
+    public async Task 跨游戏盘复制应覆盖目标current并保留来源存档()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var sourceRoot = Path.Combine(root, "source-disk");
+        var targetRoot = Path.Combine(root, "target-disk");
+        Directory.CreateDirectory(sourceRoot); Directory.CreateDirectory(targetRoot);
+        var sourceDisk = new GameDiskItem { RootPath = sourceRoot };
+        var targetDisk = new GameDiskItem { RootPath = targetRoot };
+        var game = new GameItem { DisplayName = "跨盘复制", CurrentGameDiskId = sourceDisk.Id, CurrentSaveGameDiskId = sourceDisk.Id, CurrentVersionId = Guid.NewGuid() };
+        var state = new AppState { Games = [game], GameDisks = [sourceDisk, targetDisk] };
+        try
+        {
+            var sourceSaveRoot = Path.Combine(sourceRoot, "GameSave", game.Id.ToString("N"));
+            var sourceCurrent = Path.Combine(sourceSaveRoot, "current");
+            Directory.CreateDirectory(sourceCurrent);
+            var source = Path.Combine(sourceCurrent, "slot.sav");
+            await File.WriteAllTextAsync(source, "来源存档");
+            var hash = await FileFingerprintService.ComputeSha256Async(source);
+            var manifest = new SaveSnapshotManifest { GameId = game.Id, GameVersionId = game.CurrentVersionId!.Value, Files = [new SaveSnapshotFileItem { RelativePath = "slot.sav", FileSize = new FileInfo(source).Length, Sha256 = hash }] };
+            await File.WriteAllTextAsync(Path.Combine(sourceSaveRoot, "manifest.json"), JsonSerializer.Serialize(manifest));
+            var targetCurrent = Path.Combine(targetRoot, "GameSave", game.Id.ToString("N"), "current");
+            Directory.CreateDirectory(targetCurrent);
+            await File.WriteAllTextAsync(Path.Combine(targetCurrent, "slot.sav"), "旧目标存档");
+
+            await CrossDiskSaveCopyService.CopyAsync(state, game, targetDisk);
+
+            Assert.Equal("来源存档", await File.ReadAllTextAsync(source));
+            Assert.Equal("来源存档", await File.ReadAllTextAsync(Path.Combine(targetCurrent, "slot.sav")));
+            Assert.Equal(targetDisk.Id, game.CurrentSaveGameDiskId);
+            Assert.Equal(targetCurrent, GameSavePathService.GetCurrentDirectory(state, game), ignoreCase: true);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 共享存档恢复应覆盖游戏目录和系统目录目标并校验()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var diskRoot = Path.Combine(root, "disk");
+        var staged = Path.Combine(root, "staged-game");
+        var systemRoot = Path.Combine(root, "system-save");
+        Directory.CreateDirectory(diskRoot); Directory.CreateDirectory(staged); Directory.CreateDirectory(systemRoot);
+        var disk = new GameDiskItem { RootPath = diskRoot };
+        var sourceVersion = Guid.NewGuid();
+        var targetVersion = new GameVersionItem { VersionName = "目标版本" };
+        var game = new GameItem { DisplayName = "恢复测试", CurrentGameDiskId = disk.Id, CurrentSaveGameDiskId = disk.Id, CurrentVersionId = targetVersion.Id };
+        var state = new AppState { Games = [game], GameDisks = [disk] };
+        try
+        {
+            var current = GameSavePathService.GetCurrentDirectory(state, game);
+            Directory.CreateDirectory(Path.Combine(current, "system", "root"));
+            var gameSave = Path.Combine(current, "save", "slot.sav");
+            Directory.CreateDirectory(Path.GetDirectoryName(gameSave)!);
+            await File.WriteAllTextAsync(gameSave, "游戏存档");
+            var systemStored = Path.Combine(current, "system", "root", "config.sav");
+            await File.WriteAllTextAsync(systemStored, "系统存档");
+            var systemTarget = Path.Combine(systemRoot, "config.sav");
+            await File.WriteAllTextAsync(systemTarget, "旧系统存档");
+            state.SaveFileRules.Add(new SaveFileRuleItem { GameId = game.Id, RelativePath = Path.Combine("save", "slot.sav"), StorageRelativePath = Path.Combine("save", "slot.sav"), SourceKind = "游戏目录" });
+            var manifest = new SaveSnapshotManifest
+            {
+                GameId = game.Id, GameVersionId = sourceVersion,
+                Files =
+                [
+                    new SaveSnapshotFileItem { RelativePath = Path.Combine("save", "slot.sav"), SourceKind = "游戏目录", FileSize = new FileInfo(gameSave).Length, Sha256 = await FileFingerprintService.ComputeSha256Async(gameSave) },
+                    new SaveSnapshotFileItem { RelativePath = Path.Combine("system", "root", "config.sav"), SourceKind = "系统目录", OriginalPath = systemTarget, FileSize = new FileInfo(systemStored).Length, Sha256 = await FileFingerprintService.ComputeSha256Async(systemStored) }
+                ]
+            };
+            await File.WriteAllTextAsync(CurrentSaveManifestService.GetManifestPath(state, game), JsonSerializer.Serialize(manifest));
+
+            var result = await SaveRestoreService.RestoreCurrentAsync(state, game, targetVersion, staged);
+
+            Assert.NotNull(result);
+            Assert.Equal(sourceVersion, result!.SourceVersionId);
+            Assert.Equal("游戏存档", await File.ReadAllTextAsync(Path.Combine(staged, "save", "slot.sav")));
+            Assert.Equal("系统存档", await File.ReadAllTextAsync(systemTarget));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

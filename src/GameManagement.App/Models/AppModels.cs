@@ -19,6 +19,7 @@ public sealed class AppState
     public List<SaveSnapshotItem> SaveSnapshots { get; set; } = [];
     public List<SystemSaveDirectoryRuleItem> SystemSaveDirectories { get; set; } = [];
     public List<SystemMonitorSessionItem> SystemMonitorSessions { get; set; } = [];
+    public List<ExternalBackupItem> ExternalBackups { get; set; } = [];
     public List<OperationTaskItem> OperationTasks { get; set; } = [];
 }
 
@@ -73,6 +74,13 @@ public sealed class GameItem
     public Guid? CurrentSaveGameDiskId { get; set; }
     public bool SystemSaveInitialScanCompleted { get; set; }
     public DateTime? SystemSaveInitialScanCompletedAt { get; set; }
+    public string ArchiveStatus { get; set; } = "未归档";
+    public string DirectoryCleanupStatus { get; set; } = "目录不存在";
+    public DateTime? ArchivedAt { get; set; }
+    public Guid? ArchivedVersionId { get; set; }
+    public Guid? ArchivedSnapshotId { get; set; }
+    public string ArchivedContentFingerprint { get; set; } = string.Empty;
+    public string ArchiveMessage { get; set; } = string.Empty;
     public List<GameVersionItem> Versions { get; set; } = [];
     [JsonIgnore] public string SourcePathStatus => File.Exists(SourcePath) || Directory.Exists(SourcePath) ? "有效" : "失效";
     [JsonIgnore] public string? IconFullPath => string.IsNullOrWhiteSpace(IconRelativePath) ? null : System.IO.Path.Combine(AppPaths.Root, IconRelativePath);
@@ -230,6 +238,24 @@ public sealed class SaveSnapshotFileItem
     public string OriginalPath { get; set; } = string.Empty;
     public long FileSize { get; set; }
     public string Sha256 { get; set; } = string.Empty;
+}
+
+public sealed class ExternalBackupItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid? GameId { get; set; }
+    public Guid? GameVersionId { get; set; }
+    public Guid? SaveSnapshotId { get; set; }
+    public string BackupKind { get; set; } = "单游戏手动备份";
+    public string FilePath { get; set; } = string.Empty;
+    public string ContentFingerprint { get; set; } = string.Empty;
+    public long FileSize { get; set; }
+    public string Sha256 { get; set; } = string.Empty;
+    public bool Verified { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime? VerifiedAt { get; set; }
+    [JsonIgnore] public string FileSizeText => SizeFormatter.Format(FileSize);
+    [JsonIgnore] public string VerifiedText => Verified ? "已校验" : "校验失败";
 }
 
 public sealed class SystemSaveDirectoryRuleItem

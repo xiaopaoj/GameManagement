@@ -53,6 +53,7 @@ public sealed class StateStore
                     if (string.IsNullOrWhiteSpace(rule.StorageRelativePath)) rule.StorageRelativePath = rule.RelativePath;
                 }
                 foreach (var exclusion in state.SaveFileExclusions.Where(item => item.GameId == game.Id && item.SourceKind == "游戏目录" && string.IsNullOrWhiteSpace(item.SourceRootPath))) exclusion.SourceRootPath = game.PlayableRootPath ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(game.PlayableRootPath) && Directory.Exists(game.PlayableRootPath) && game.DirectoryCleanupStatus == "目录不存在") game.DirectoryCleanupStatus = "目录存在";
             }
             OperationTaskRecoveryService.MarkInterrupted(state);
             return state;
@@ -420,6 +421,12 @@ public static class GameRuntimeStateService
     public static void MarkStarted(GameItem game, int processId, DateTime startedAt)
     {
         game.Status = "运行中";
+        if (game.ArchiveStatus == "已归档")
+        {
+            game.ArchiveStatus = "未归档";
+            game.DirectoryCleanupStatus = "目录存在";
+            game.ArchiveMessage = "已归档目录重新启动，重新进入游玩和存档监控状态。";
+        }
         game.RunningProcessId = processId;
         game.CurrentPlayStartedAt = startedAt;
         game.LastPlayedAt = startedAt;

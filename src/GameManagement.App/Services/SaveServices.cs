@@ -10,7 +10,7 @@ public static class GameSavePathService
 {
     public static GameDiskItem GetCurrentDisk(AppState state, GameItem game)
     {
-        var diskIds = new[] { game.CurrentGameDiskId, game.CurrentSaveGameDiskId }.Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
+        var diskIds = new[] { game.CurrentSaveGameDiskId, game.CurrentGameDiskId }.Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
         var disk = diskIds.Select(id => state.GameDisks.FirstOrDefault(item => item.Id == id && Directory.Exists(item.RootPath))).FirstOrDefault(item => item is not null);
         return disk ?? throw new InvalidOperationException("当前游戏没有可用的游戏盘，无法保存本地存档。");
     }

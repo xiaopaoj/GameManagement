@@ -13,6 +13,7 @@ public partial class GameDetailWindow : Window
     private readonly AppState _state;
     private readonly Action<string> _save;
     private readonly Action<GameItem, string> _gameStateChanged;
+    private bool _versionSwitchInProgress;
 
     public GameDetailWindow(GameItem game, AppState state, Action<string> save, Action<GameItem, string> gameStateChanged)
     {
@@ -51,21 +52,36 @@ public partial class GameDetailWindow : Window
     private async void Prepare_Click(object sender, RoutedEventArgs e)
     {
         var version = _game.Versions.FirstOrDefault(item => item.Id == _game.CurrentVersionId) ?? _game.Versions.FirstOrDefault();
-        if (version is null) { ShowError("当前游戏没有可准备的版本。"); return; }
-        if (!File.Exists(version.SourcePath) && !Directory.Exists(version.SourcePath)) { ShowError("原始文件或目录不存在，请先执行重新定位。"); return; }
-        if (!string.IsNullOrWhiteSpace(_game.PlayableRootPath) && Directory.Exists(_game.PlayableRootPath)) { ShowError("当前游戏已经存在可游玩目录，不允许重复准备。"); return; }
+        if (version is null) { ShowError("当前游戏没有可准备的版本。"); FailPendingVersionSwitch(); return; }
+        if (!File.Exists(version.SourcePath) && !Directory.Exists(version.SourcePath)) { ShowError("原始文件或目录不存在，请先执行重新定位。"); FailPendingVersionSwitch(); return; }
+        if (!string.IsNullOrWhiteSpace(_game.PlayableRootPath) && Directory.Exists(_game.PlayableRootPath)) { ShowError("当前游戏已经存在可游玩目录，不允许重复准备。"); FailPendingVersionSwitch(); return; }
 
         var disks = _state.GameDisks.Where(disk => disk.Enabled && Directory.Exists(disk.RootPath)).OrderByDescending(disk => disk.IsDefault).ThenBy(disk => disk.DisplayName).ToList();
-        if (disks.Count == 0) { ShowError("请先在设置中添加并启用至少一个游戏盘。"); return; }
+        if (disks.Count == 0) { ShowError("请先在设置中添加并启用至少一个游戏盘。"); FailPendingVersionSwitch(); return; }
         var sourceSize = version.SourceSize > 0 ? version.SourceSize : await Task.Run(() => SpaceEstimationService.GetSourceSize(version.SourcePath));
         var estimatedSpace = SpaceEstimationService.EstimateRequiredSpace(sourceSize);
         var diskChoice = SelectChoice("选择游戏盘", $"请选择本次准备游戏使用的游戏盘。预计至少需要 {Models.SizeFormatter.Format(estimatedSpace)} 临时与解压空间：", disks.Select(disk => new ChoiceItem { Name = disk.IsDefault ? $"{disk.DisplayName}（默认）" : disk.DisplayName, Description = $"{disk.RootPath}（剩余 {disk.FreeSpaceText}，最低保留 {disk.MinimumFreeSpaceText}）", Value = disk }));
-        if (diskChoice?.Value is not GameDiskItem disk) return;
+        if (diskChoice?.Value is not GameDiskItem disk) { FailPendingVersionSwitch(); return; }
         var availableSpace = SpaceEstimationService.GetAvailableSpace(disk.RootPath);
         if (availableSpace < estimatedSpace + disk.MinimumFreeSpaceBytes)
         {
             ShowError($"目标游戏盘空间不足。\n预计需要：{Models.SizeFormatter.Format(estimatedSpace)}\n最低保留：{Models.SizeFormatter.Format(disk.MinimumFreeSpaceBytes)}\n当前可用：{Models.SizeFormatter.Format(availableSpace)}");
+            FailPendingVersionSwitch();
             return;
+        }
+
+        var requiresSaveCopy = _game.HasLocalSave && CrossDiskSaveCopyService.RequiresCopy(_state, _game, disk);
+        if (requiresSaveCopy && CrossDiskSaveCopyService.TargetCurrentExists(_game, disk)
+            && MessageBox.Show("目标游戏盘已经存在该游戏的 current 存档。按照需求，复制时将保留来源存档并覆盖目标存档。是否继续？", "跨游戏盘存档覆盖确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) { FailPendingVersionSwitch(); return; }
+        if (_game.HasLocalSave)
+        {
+            try
+            {
+                var manifest = await CurrentSaveManifestService.LoadAsync(_state, _game);
+                if (manifest is not null && manifest.GameVersionId != Guid.Empty && manifest.GameVersionId != version.Id
+                    && MessageBox.Show($"当前共享存档来自其他版本。\n\n来源版本 ID：{manifest.GameVersionId}\n目标版本：{version.VersionName}\n\n跨版本恢复可能不兼容，是否继续？", "共享存档兼容风险", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) { FailPendingVersionSwitch(); return; }
+            }
+            catch (Exception ex) { ShowError($"读取共享存档清单失败：{ex.Message}"); FailPendingVersionSwitch(); return; }
         }
 
         var workRoot = Path.Combine(disk.RootPath, "GameTemp", _game.Id.ToString(), version.Id.ToString());
@@ -74,12 +90,12 @@ public partial class GameDetailWindow : Window
         var step2 = Path.Combine(workRoot, "step2");
         var stagedFinal = Path.Combine(workRoot, "final");
         var finalTarget = Path.Combine(disk.RootPath, "Games", _game.Id.ToString());
-        if (Directory.Exists(finalTarget)) { ShowError($"目标游戏目录已经存在：\n{finalTarget}"); return; }
+        if (Directory.Exists(finalTarget)) { ShowError($"目标游戏目录已经存在：\n{finalTarget}"); FailPendingVersionSwitch(); return; }
         if (Directory.Exists(workRoot))
         {
-            if (MessageBox.Show($"检测到上次失败、中断或取消后保留的临时目录：\n{workRoot}\n\n重新准备需要永久删除该临时目录，是否继续？", "临时目录恢复", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            if (MessageBox.Show($"检测到上次失败、中断或取消后保留的临时目录：\n{workRoot}\n\n重新准备需要永久删除该临时目录，是否继续？", "临时目录恢复", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) { FailPendingVersionSwitch(); return; }
             try { Directory.Delete(workRoot, true); }
-            catch (Exception ex) { ShowError($"无法清理旧临时目录：{ex.Message}"); return; }
+            catch (Exception ex) { ShowError($"无法清理旧临时目录：{ex.Message}"); FailPendingVersionSwitch(); return; }
         }
 
         using var cancellation = new CancellationTokenSource();
@@ -88,8 +104,15 @@ public partial class GameDetailWindow : Window
         var progress = new PreparationProgressWindow { Owner = this };
         progress.EnableCancellation(cancellation.Cancel);
         progress.Show(); IsEnabled = false;
+        var finalCommitted = false;
         try
         {
+            if (requiresSaveCopy)
+            {
+                UpdatePreparationTask(task, progress, 3, "正在复制并校验跨游戏盘主存档…", GameSavePathService.GetCurrentDirectory(_state, _game), "复制中");
+                await CrossDiskSaveCopyService.CopyAsync(_state, _game, disk, cancellation.Token);
+                _save("跨游戏盘主存档复制和校验完成，来源存档已保留");
+            }
             if (string.IsNullOrWhiteSpace(version.SourceFingerprint))
             {
                 UpdatePreparationTask(task, progress, 5, "正在为旧版本补充原始来源指纹…", version.SourcePath, "复制中");
@@ -193,7 +216,15 @@ public partial class GameDetailWindow : Window
 
             cancellation.Token.ThrowIfCancellationRequested();
             Directory.Move(stagedFinal, finalTarget);
+            finalCommitted = true;
             var finalExecutable = Path.Combine(finalTarget, executableRelativePath);
+
+            if (_game.HasLocalSave)
+            {
+                UpdatePreparationTask(task, progress, 96, "正在恢复共享存档并校验目标文件…", finalTarget, "等待确认游戏目录");
+                var restore = await SaveRestoreService.RestoreCurrentAsync(_state, _game, version, finalTarget, cancellation.Token);
+                if (restore is not null) task.Message = $"已恢复 {restore.GameFileCount} 个游戏目录存档和 {restore.SystemFileCount} 个系统目录存档";
+            }
 
             version.GameDiskId = disk.Id;
             _game.CurrentGameDiskId = disk.Id;
@@ -202,8 +233,12 @@ public partial class GameDetailWindow : Window
             _game.IconRelativePath = IconExtractionService.ExtractToCache(finalExecutable, _game.Id);
             ConfirmDirectoryNameAsNote(selectedGameRoot);
             _game.Status = "可游玩";
+            _game.ArchiveStatus = "未归档";
+            _game.DirectoryCleanupStatus = "目录存在";
+            _game.ArchiveMessage = string.Empty;
             task.Status = "完成"; task.Progress = 100; task.Message = $"游戏准备完成，共建立 {baselines.Count} 个文件基线"; task.CurrentPath = finalTarget; task.CompletedAt = DateTime.Now;
             _save(task.Message);
+            _versionSwitchInProgress = false;
             RefreshBindings();
 
             progress.UpdateStatus("正在自动清理成功任务的临时目录…", 100);
@@ -222,14 +257,16 @@ public partial class GameDetailWindow : Window
         }
         catch (OperationCanceledException ex)
         {
+            RollbackFinalCommit(finalTarget, stagedFinal, finalCommitted);
             task.Status = "已取消"; task.Message = "用户取消了准备任务，临时目录已保留。"; task.ErrorMessage = ex.Message; task.CompletedAt = DateTime.Now;
-            _game.Status = "未准备"; _save(task.Message);
+            _game.Status = _versionSwitchInProgress ? "版本切换失败" : "未准备"; _versionSwitchInProgress = false; _save(task.Message);
             MessageBox.Show($"准备任务已取消。\n\n临时目录已保留：\n{workRoot}", "任务已取消", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
+            RollbackFinalCommit(finalTarget, stagedFinal, finalCommitted);
             task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now;
-            _game.Status = "操作失败"; _save("准备任务失败，临时目录已保留");
+            _game.Status = _versionSwitchInProgress ? "版本切换失败" : "操作失败"; _versionSwitchInProgress = false; _save("准备任务失败，临时目录已保留");
             AppLogger.Error($"准备游戏失败：{_game.DisplayName}", ex);
             MessageBox.Show($"游戏准备失败：{ex.Message}\n\n临时目录已保留：\n{workRoot}", "准备失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -239,12 +276,16 @@ public partial class GameDetailWindow : Window
             progress.CloseSafely();
         }
     }
-    private void Archive_Click(object sender, RoutedEventArgs e) => ShowFeature("归档游戏", "比较文件基线，保存并校验本地存档及外部备份，然后单独处理可游玩目录。");
+    private async void Archive_Click(object sender, RoutedEventArgs e) => await ArchiveCurrentAsync(false);
     private void SpecialArchive_Click(object sender, RoutedEventArgs e) => ShowFeature("特殊归档", "选择已有的混乱游戏目录，与从原始压缩文件构建的干净基准目录比较后提取存档。");
     private void ManualBackup_Click(object sender, RoutedEventArgs e) => ShowFeature("手动备份", "将当前游戏的本地存档创建为无密码 ZIP，完成文件清单和 Hash 校验。");
     private void SaveDirectories_Click(object sender, RoutedEventArgs e) => new SystemSaveDirectoryWindow(_game, _state, _save) { Owner = this }.ShowDialog();
     private void Snapshots_Click(object sender, RoutedEventArgs e) => new SaveManagementWindow(_state, _save, _game) { Owner = this }.ShowDialog();
-    private void Versions_Click(object sender, RoutedEventArgs e) => OpenVersionManagement(null);
+    private async void Versions_Click(object sender, RoutedEventArgs e)
+    {
+        var requested = OpenVersionManagement(null);
+        if (requested is not null) await SwitchAndPrepareAsync(requested);
+    }
     private void Credentials_Click(object sender, RoutedEventArgs e) => new CredentialManagementWindow(_game, _state, _save) { Owner = this }.ShowDialog();
     private async void RecognizeGame_Click(object sender, RoutedEventArgs e)
     {
@@ -304,9 +345,112 @@ public partial class GameDetailWindow : Window
         _save("游戏名称与备注已更新"); RefreshBindings();
     }
 
-    private void OpenVersionManagement(Guid? selectedVersionId)
+    private GameVersionItem? OpenVersionManagement(Guid? selectedVersionId)
     {
-        new VersionManagementWindow(_game, _state, _save, selectedVersionId) { Owner = this }.ShowDialog();
+        var window = new VersionManagementWindow(_game, _state, _save, selectedVersionId) { Owner = this };
+        window.ShowDialog();
+        RefreshBindings();
+        return window.RequestedPreparationVersion;
+    }
+
+    private async Task SwitchAndPrepareAsync(GameVersionItem targetVersion)
+    {
+        if (_versionSwitchInProgress) { ShowError("当前游戏已经有版本切换任务正在执行。"); return; }
+        if (_game.Status == "运行中") { ShowError("主游戏程序仍在运行，禁止切换版本。"); return; }
+        if (!string.IsNullOrWhiteSpace(_game.PlayableRootPath) && Directory.Exists(_game.PlayableRootPath))
+        {
+            if (!await ArchiveCurrentAsync(true)) return;
+        }
+        if (!string.IsNullOrWhiteSpace(_game.PlayableRootPath) && Directory.Exists(_game.PlayableRootPath)) { ShowError("当前版本目录尚未成功移入回收站，版本切换已终止。"); return; }
+        _versionSwitchInProgress = true;
+        _game.CurrentVersionId = targetVersion.Id;
+        _game.CurrentVersionName = targetVersion.VersionName;
+        _game.SourcePath = targetVersion.SourcePath;
+        _game.SourceKind = targetVersion.SourceKind;
+        _game.Status = "未准备";
+        _save($"开始切换并准备版本：{targetVersion.VersionName}");
+        RefreshBindings();
+        Prepare_Click(this, new RoutedEventArgs());
+    }
+
+    private async Task<bool> ArchiveCurrentAsync(bool requireDirectoryRemoval)
+    {
+        if (_game.Status == "运行中" || _game.RunningProcessId.HasValue) { ShowError("主游戏程序仍在运行，禁止归档。"); return false; }
+        if (string.IsNullOrWhiteSpace(_game.PlayableRootPath) || !Directory.Exists(_game.PlayableRootPath)) { ShowError("可游玩目录不存在，无法执行普通归档。"); return false; }
+        var task = new OperationTaskItem { Name = $"普通归档：{_game.DisplayName}", TaskType = "普通归档", GameId = _game.Id, GameVersionId = _game.CurrentVersionId, Status = "运行中", Message = "正在检查游戏目录存档变化", CurrentPath = _game.PlayableRootPath };
+        _state.OperationTasks.Add(task); _game.Status = "归档中"; _save("普通归档任务已创建"); RefreshBindings();
+        try
+        {
+            var candidates = await SaveChangeDetectionService.DetectAsync(_state, _game, SaveSnapshotKinds.Normal);
+            SaveChangeDetectionService.ReplaceDetectedCandidates(_state, _game, candidates);
+            var automatic = candidates.Where(item => item.PreviouslyConfirmed && item.ChangeType != "删除" && item.Decision == SaveCandidateDecisions.Pending).Select(item => item.Id).ToList();
+            if (automatic.Count > 0) await SaveSnapshotService.ApplyAndCreateAsync(_state, _game, automatic);
+            _save("普通归档前游戏目录存档扫描完成");
+            if (_state.SaveCandidates.Any(item => item.GameId == _game.Id && item.Decision == SaveCandidateDecisions.Pending))
+            {
+                new SaveManagementWindow(_state, _save, _game) { Owner = this }.ShowDialog();
+            }
+
+            var readiness = await OrdinaryArchiveService.CheckReadinessAsync(_state, _game);
+            if (!readiness.Ready)
+            {
+                task.Status = "等待"; task.Message = string.Join("；", readiness.Problems); task.CompletedAt = DateTime.Now;
+                _game.Status = "可游玩"; _save("普通归档条件尚未满足"); RefreshBindings();
+                var needsBackup = readiness.Problems.Any(item => item.Contains("外部 ZIP 备份", StringComparison.Ordinal));
+                MessageBox.Show($"当前不能完成归档：\n\n- {string.Join("\n- ", readiness.Problems)}{(needsBackup ? "\n\n请先使用“手动备份”创建并校验最新存档的外部 ZIP。" : string.Empty)}", "归档条件未满足", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            OrdinaryArchiveService.MarkArchived(_game, readiness.Manifest!);
+            task.Progress = 80; task.Message = "归档条件已满足，游戏已标记为已归档"; _save(task.Message); RefreshBindings();
+            var delete = MessageBox.Show($"游戏已经成功归档。是否将当前可游玩目录移入 Windows 回收站以释放空间？\n\n{_game.PlayableRootPath}", "归档目录清理确认", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+            if (!delete)
+            {
+                task.Status = "完成"; task.Progress = 100; task.Message = "归档完成，游戏目录按用户选择保留"; task.CompletedAt = DateTime.Now; _save(task.Message); RefreshBindings();
+                if (requireDirectoryRemoval) MessageBox.Show("版本切换要求先清理当前可游玩目录，本次切换已终止；归档状态仍然有效。", "版本切换已终止", MessageBoxButton.OK, MessageBoxImage.Information);
+                return !requireDirectoryRemoval;
+            }
+            var playable = _game.PlayableRootPath!;
+            try
+            {
+                RecycleBinService.MoveDirectory(playable);
+                OrdinaryArchiveService.MarkCleanupSucceeded(_game);
+                task.Status = "完成"; task.Progress = 100; task.Message = "归档完成，游戏目录已移入回收站"; task.CompletedAt = DateTime.Now; _save(task.Message); RefreshBindings();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                OrdinaryArchiveService.MarkCleanupFailed(_game, ex.Message);
+                task.Status = "完成"; task.Progress = 100; task.Message = "归档完成，但游戏目录清理失败"; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; _save(task.Message); RefreshBindings();
+                MessageBox.Show($"存档归档已经完成，但目录未能移入回收站：{ex.Message}\n\n归档状态不受影响。", "目录清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now;
+            _game.Status = "操作失败"; _save("普通归档失败"); RefreshBindings(); AppLogger.Error($"普通归档失败：{_game.DisplayName}", ex); ShowError(ex.Message); return false;
+        }
+    }
+
+    private static void RollbackFinalCommit(string finalTarget, string stagedFinal, bool finalCommitted)
+    {
+        if (!finalCommitted || !Directory.Exists(finalTarget)) return;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(stagedFinal)!);
+            if (Directory.Exists(stagedFinal)) Directory.Delete(stagedFinal, true);
+            Directory.Move(finalTarget, stagedFinal);
+        }
+        catch (Exception ex) { AppLogger.Error($"准备失败后回收最终目录失败：{finalTarget}", ex); }
+    }
+
+    private void FailPendingVersionSwitch()
+    {
+        if (!_versionSwitchInProgress) return;
+        _versionSwitchInProgress = false;
+        _game.Status = "版本切换失败";
+        _save("版本切换未能进入准备流程");
         RefreshBindings();
     }
 

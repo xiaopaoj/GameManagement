@@ -13,6 +13,7 @@ public partial class VersionManagementWindow : Window
     private readonly AppState _state;
     private readonly Action<string> _save;
     private readonly Guid? _initialVersionId;
+    public GameVersionItem? RequestedPreparationVersion { get; private set; }
 
     public VersionManagementWindow(GameItem game, AppState state, Action<string> save, Guid? initialVersionId = null)
     {
@@ -90,6 +91,18 @@ public partial class VersionManagementWindow : Window
         ApplyCurrentVersion(version);
         _save($"当前版本已切换为：{version.VersionName}");
         RefreshVersions(version.Id);
+    }
+
+    private void SwitchAndPrepare_Click(object sender, RoutedEventArgs e)
+    {
+        var version = SelectedVersion;
+        if (version is null) { ShowError("请先选择一个版本。"); return; }
+        if (!File.Exists(version.SourcePath) && !Directory.Exists(version.SourcePath)) { ShowError("目标版本原始来源已经失效，请先重新定位。"); return; }
+        if (_game.Status == "运行中") { ShowError("主游戏程序运行期间禁止切换版本。"); return; }
+        var action = _game.CurrentVersionId == version.Id ? "重新准备当前版本" : $"切换到“{version.VersionName}”并重新准备";
+        if (MessageBox.Show($"将执行：{action}。\n\n若当前可游玩目录存在，必须先完成存档归档并将目录移入回收站；准备失败时不会自动恢复旧版本。是否继续？", "切换并准备确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        RequestedPreparationVersion = version;
+        DialogResult = true;
     }
 
     private async void Relocate_Click(object sender, RoutedEventArgs e)

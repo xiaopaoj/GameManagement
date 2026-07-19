@@ -7,7 +7,7 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel>
             <TextBlock x:Name="GameNameText" FontSize="24" FontWeight="SemiBold"/>
-            <TextBlock Text="同一游戏可以保存多个原始版本；存在可游玩目录时禁止切换当前版本。" Foreground="#59636E" Margin="0,5,0,12"/>
+            <TextBlock Text="“设为当前版本”只修改未准备游戏；“切换并准备”会返回详情页执行归档、回收站清理、版本切换和重新准备。" Foreground="#59636E" Margin="0,5,0,12" TextWrapping="Wrap"/>
         </StackPanel>
         <DataGrid x:Name="VersionGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single">
             <DataGrid.Columns>
@@ -28,6 +28,7 @@
                 <Button Content="添加版本" Click="AddVersion_Click" Padding="14,8" Margin="4"/>
                 <Button Content="编辑版本信息" Click="EditVersion_Click" Padding="14,8" Margin="4"/>
                 <Button Content="设为当前版本" Click="SetCurrent_Click" Padding="14,8" Margin="4"/>
+                <Button Content="切换并准备" Click="SwitchAndPrepare_Click" Padding="14,8" Margin="4"/>
                 <Button Content="重新定位来源" Click="Relocate_Click" Padding="14,8" Margin="4"/>
                 <Button Content="打开原始位置" Click="OpenSource_Click" Padding="14,8" Margin="4"/>
             </WrapPanel>
