@@ -242,7 +242,7 @@ public partial class GameDetailWindow : Window
     private void Archive_Click(object sender, RoutedEventArgs e) => ShowFeature("归档游戏", "比较文件基线，保存并校验本地存档及外部备份，然后单独处理可游玩目录。");
     private void SpecialArchive_Click(object sender, RoutedEventArgs e) => ShowFeature("特殊归档", "选择已有的混乱游戏目录，与从原始压缩文件构建的干净基准目录比较后提取存档。");
     private void ManualBackup_Click(object sender, RoutedEventArgs e) => ShowFeature("手动备份", "将当前游戏的本地存档创建为无密码 ZIP，完成文件清单和 Hash 校验。");
-    private void SaveDirectories_Click(object sender, RoutedEventArgs e) => ShowFeature("存档目录设置", "添加、修改、启用、禁用或删除该游戏关联的多个 Windows 系统存档目录。");
+    private void SaveDirectories_Click(object sender, RoutedEventArgs e) => new SystemSaveDirectoryWindow(_game, _state, _save) { Owner = this }.ShowDialog();
     private void Snapshots_Click(object sender, RoutedEventArgs e) => new SaveManagementWindow(_state, _save, _game) { Owner = this }.ShowDialog();
     private void Versions_Click(object sender, RoutedEventArgs e) => OpenVersionManagement(null);
     private void Credentials_Click(object sender, RoutedEventArgs e) => new CredentialManagementWindow(_game, _state, _save) { Owner = this }.ShowDialog();
@@ -269,10 +269,19 @@ public partial class GameDetailWindow : Window
     private void RelocateSource_Click(object sender, RoutedEventArgs e) => OpenVersionManagement(_game.CurrentVersionId);
     private void DeleteSource_Click(object sender, RoutedEventArgs e) => ShowFeature("删除原始文件", "该操作最终需要两次人工确认，并且只能将原始压缩文件和相关分卷移入 Windows 回收站。");
 
-    private void Launch_Click(object sender, RoutedEventArgs e)
+    private async void Launch_Click(object sender, RoutedEventArgs e)
     {
+        if (_game.Status == "运行中") { ShowError("该游戏的主程序已经在运行。 "); return; }
+        var progressWindow = new PreparationProgressWindow("正在建立系统存档监控快照") { Owner = this };
+        using var cancellation = new CancellationTokenSource();
+        progressWindow.EnableCancellation(cancellation.Cancel);
         try
         {
+            IsEnabled = false; progressWindow.Show();
+            var progress = new Progress<SystemMonitorProgress>(value => progressWindow.UpdateStatus($"已扫描 {value.FileCount} 个系统目录文件：{value.CurrentPath}", 50));
+            var session = await SystemSaveMonitoringService.BeginSessionAsync(_state, _game, progress, cancellation.Token);
+            _save(session is null ? "未配置可用的系统存档目录，本次只监控游戏目录" : "游戏启动前的系统存档监控快照已建立");
+            progressWindow.CloseSafely(); IsEnabled = true;
             GameProcessMonitorService.Launch(_game, (game, message) =>
             {
                 _gameStateChanged(game, message);
@@ -280,7 +289,9 @@ public partial class GameDetailWindow : Window
             });
             RefreshBindings();
         }
-        catch (Exception ex) { MessageBox.Show(ex.Message, "启动失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        catch (OperationCanceledException) { SystemSaveMonitoringService.CancelLatestSession(_state, _game, "已取消"); _save("游戏启动前的系统存档扫描已取消"); }
+        catch (Exception ex) { SystemSaveMonitoringService.CancelLatestSession(_state, _game, "启动失败"); _save("游戏启动失败，系统存档监控快照已取消"); MessageBox.Show(ex.Message, "启动失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { IsEnabled = true; progressWindow.CloseSafely(); }
     }
 
     private void EditGame_Click(object sender, RoutedEventArgs e)

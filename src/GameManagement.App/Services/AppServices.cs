@@ -47,6 +47,12 @@ public sealed class StateStore
                 if (string.IsNullOrWhiteSpace(game.SourceKind) || game.SourceKind == SourceKinds.Unknown) game.SourceKind = SourceKinds.Detect(game.SourcePath);
                 foreach (var version in game.Versions)
                     if (string.IsNullOrWhiteSpace(version.SourceKind) || version.SourceKind == SourceKinds.Unknown) version.SourceKind = SourceKinds.Detect(version.SourcePath);
+                foreach (var rule in state.SaveFileRules.Where(item => item.GameId == game.Id && item.SourceKind == "游戏目录"))
+                {
+                    if (string.IsNullOrWhiteSpace(rule.SourceRootPath)) rule.SourceRootPath = game.PlayableRootPath ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(rule.StorageRelativePath)) rule.StorageRelativePath = rule.RelativePath;
+                }
+                foreach (var exclusion in state.SaveFileExclusions.Where(item => item.GameId == game.Id && item.SourceKind == "游戏目录" && string.IsNullOrWhiteSpace(item.SourceRootPath))) exclusion.SourceRootPath = game.PlayableRootPath ?? string.Empty;
             }
             OperationTaskRecoveryService.MarkInterrupted(state);
             return state;
@@ -458,7 +464,7 @@ public static class GameProcessMonitorService
             if (game.RunningProcessId is not int processId)
             {
                 GameRuntimeStateService.MarkExited(game, null, DateTime.Now);
-                stateChanged(game, $"已修正游戏“{game.DisplayName}”的过期运行状态。");
+                stateChanged(game, $"主游戏程序已退出；已修正游戏“{game.DisplayName}”的过期运行状态。");
                 continue;
             }
 
@@ -469,7 +475,7 @@ public static class GameProcessMonitorService
                 {
                     process.Dispose();
                     GameRuntimeStateService.MarkExited(game, null, DateTime.Now);
-                    stateChanged(game, $"检测到游戏“{game.DisplayName}”的主程序已经结束。");
+                    stateChanged(game, $"主游戏程序已退出；检测到游戏“{game.DisplayName}”的主程序已经结束。");
                     continue;
                 }
                 Track(game, process, stateChanged);
@@ -477,12 +483,12 @@ public static class GameProcessMonitorService
             catch (ArgumentException)
             {
                 GameRuntimeStateService.MarkExited(game, null, DateTime.Now);
-                stateChanged(game, $"检测到游戏“{game.DisplayName}”的主程序已经结束。");
+                stateChanged(game, $"主游戏程序已退出；检测到游戏“{game.DisplayName}”的主程序已经结束。");
             }
             catch (InvalidOperationException)
             {
                 GameRuntimeStateService.MarkExited(game, null, DateTime.Now);
-                stateChanged(game, $"无法恢复游戏“{game.DisplayName}”的进程监听，已清理过期运行状态。");
+                stateChanged(game, $"主游戏程序已退出；无法恢复游戏“{game.DisplayName}”的进程监听，已清理过期运行状态。");
             }
         }
     }

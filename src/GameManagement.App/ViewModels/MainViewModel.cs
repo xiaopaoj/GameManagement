@@ -287,11 +287,27 @@ public sealed class MainViewModel : ObservableObject
         Save("游戏盘配置已更新"); CollectionViewSource.GetDefaultView(GameDisks).Refresh();
     }
 
-    private void LaunchGame()
+    private async void LaunchGame()
     {
         if (SelectedGame is null) return;
-        try { GameProcessMonitorService.Launch(SelectedGame, OnGameStateChanged); }
-        catch (Exception ex) { ShowError(ex.Message); }
+        if (SelectedGame.Status == "运行中") { ShowError("该游戏的主程序已经在运行。 "); return; }
+        var game = SelectedGame;
+        var owner = Application.Current.MainWindow;
+        var progressWindow = new PreparationProgressWindow("正在建立系统存档监控快照") { Owner = owner };
+        using var cancellation = new CancellationTokenSource();
+        progressWindow.EnableCancellation(cancellation.Cancel);
+        try
+        {
+            owner.IsEnabled = false; progressWindow.Show();
+            var progress = new Progress<SystemMonitorProgress>(value => progressWindow.UpdateStatus($"已扫描 {value.FileCount} 个系统目录文件：{value.CurrentPath}", 50));
+            await SystemSaveMonitoringService.BeginSessionAsync(_state, game, progress, cancellation.Token);
+            _store.Save(_state);
+            progressWindow.CloseSafely(); owner.IsEnabled = true;
+            GameProcessMonitorService.Launch(game, OnGameStateChanged);
+        }
+        catch (OperationCanceledException) { SystemSaveMonitoringService.CancelLatestSession(_state, game, "已取消"); _store.Save(_state); StatusMessage = "游戏启动前的系统存档扫描已取消"; }
+        catch (Exception ex) { SystemSaveMonitoringService.CancelLatestSession(_state, game, "启动失败"); _store.Save(_state); ShowError(ex.Message); }
+        finally { owner.IsEnabled = true; progressWindow.CloseSafely(); }
     }
 
     private void OnGameStateChanged(GameItem game, string message)
@@ -314,16 +330,21 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             var kind = game.LastExitCode == 0 ? SaveSnapshotKinds.Normal : SaveSnapshotKinds.Abnormal;
-            var candidates = await SaveChangeDetectionService.DetectAsync(_state, game, kind);
-            SaveChangeDetectionService.ReplaceDetectedCandidates(_state, game, candidates);
-            var automaticCandidates = candidates.Where(item => item.PreviouslyConfirmed && item.ChangeType != "删除" && item.Decision == SaveCandidateDecisions.Pending).Select(item => item.Id).ToList();
+            var activeSystemSession = _state.SystemMonitorSessions.Where(item => item.GameId == game.Id && item.Status == "监控中").OrderByDescending(item => item.StartedAt).FirstOrDefault();
+            var wasInitialSystemScan = activeSystemSession?.IsInitialCommonScan == true;
+            var systemCandidates = await SystemSaveMonitoringService.CompleteSessionAsync(_state, game, kind);
+            SystemSaveMonitoringService.ReplaceDetectedCandidates(_state, game, systemCandidates);
+            var gameCandidates = await SaveChangeDetectionService.DetectAsync(_state, game, kind);
+            SaveChangeDetectionService.ReplaceDetectedCandidates(_state, game, gameCandidates);
+            var candidates = gameCandidates.Concat(systemCandidates).ToList();
+            var automaticCandidates = candidates.Where(item => item.PreviouslyConfirmed && !item.SharedDirectory && item.ChangeType != "删除" && item.Decision == SaveCandidateDecisions.Pending).Select(item => item.Id).ToList();
             SaveSnapshotCreationResult? automaticResult = null;
             if (automaticCandidates.Count > 0) automaticResult = await SaveSnapshotService.ApplyAndCreateAsync(_state, game, automaticCandidates);
-            task.Status = "完成"; task.Progress = 100; task.Message = automaticResult?.ContentChanged == true ? $"发现 {candidates.Count} 个变化，已自动创建{kind}快照" : $"发现 {candidates.Count} 个游戏目录变化"; task.CompletedAt = DateTime.Now;
+            task.Status = "完成"; task.Progress = 100; task.Message = automaticResult?.ContentChanged == true ? $"发现 {candidates.Count} 个变化，已自动创建{kind}快照" : $"发现 {candidates.Count} 个游戏及系统目录变化"; task.CompletedAt = DateTime.Now;
             _store.Save(_state);
             var pendingCount = candidates.Count(item => item.Decision == SaveCandidateDecisions.Pending);
             StatusMessage = pendingCount == 0 ? "游戏退出后未发现需要确认的存档变化" : $"发现 {pendingCount} 个待确认存档候选";
-            if (pendingCount > 0)
+            if (pendingCount > 0 || wasInitialSystemScan)
             {
                 var owner = Application.Current.Windows.OfType<Window>().FirstOrDefault(window => window.IsActive) ?? Application.Current.MainWindow;
                 var window = new SaveManagementWindow(_state, message => Save(message), game) { Owner = owner };
@@ -342,6 +363,15 @@ public sealed class MainViewModel : ObservableObject
     {
         new SaveManagementWindow(_state, message => Save(message), null, initialTab, snapshotFilter) { Owner = Application.Current.MainWindow }.ShowDialog();
         CollectionViewSource.GetDefaultView(Games).Refresh();
+    }
+
+    public void OpenSystemSaveDirectories()
+    {
+        if (_state.Games.Count == 0) { ShowError("游戏库中没有可配置的游戏。 "); return; }
+        var choices = _state.Games.OrderBy(game => game.DisplayName).Select(game => new ChoiceItem { Name = game.DisplayName, Description = game.SourcePath, Value = game });
+        var choiceWindow = new ChoiceWindow("选择游戏", "请选择需要管理系统存档目录的游戏：", choices) { Owner = Application.Current.MainWindow };
+        if (choiceWindow.ShowDialog() != true || choiceWindow.SelectedChoice?.Value is not GameItem game) return;
+        new SystemSaveDirectoryWindow(game, _state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();
     }
 
     public void OpenSelectedGameDetails()

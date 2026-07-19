@@ -99,7 +99,9 @@ public static class SaveChangeDetectionService
             GameVersionId = versionId,
             GameName = game.DisplayName,
             SourcePath = path,
+            SourceRootPath = game.PlayableRootPath ?? string.Empty,
             RelativePath = normalized,
+            StorageRelativePath = normalized,
             ChangeType = changeType,
             FileSize = size,
             ModifiedAt = info?.LastWriteTime ?? deletedModifiedAt,
@@ -138,19 +140,22 @@ public static class SaveSnapshotService
         {
             if (Directory.Exists(currentDirectory)) await SourceCopyService.CopyDirectoryAsync(currentDirectory, workingDirectory, token);
             else Directory.CreateDirectory(workingDirectory);
-            var before = await CaptureManifestAsync(game, candidates[0].SnapshotKind, currentDirectory, Guid.Empty, token);
+            var before = await CaptureManifestAsync(state, game, candidates[0].SnapshotKind, currentDirectory, Guid.Empty, token);
 
             foreach (var candidate in candidates)
             {
                 token.ThrowIfCancellationRequested();
-                var target = GetSafeChildPath(workingDirectory, candidate.RelativePath);
+                var storageRelativePath = string.IsNullOrWhiteSpace(candidate.StorageRelativePath) ? candidate.RelativePath : candidate.StorageRelativePath;
+                var target = GetSafeChildPath(workingDirectory, storageRelativePath);
                 if (candidate.ChangeType == "删除")
                 {
                     if (File.Exists(target)) File.Delete(target);
                 }
                 else
                 {
-                    var source = GetSafeChildPath(game.PlayableRootPath, candidate.RelativePath);
+                    var sourceRoot = candidate.SourceKind == "系统目录" ? candidate.SourceRootPath : game.PlayableRootPath;
+                    if (string.IsNullOrWhiteSpace(sourceRoot)) throw new InvalidOperationException("候选文件缺少有效来源根目录。");
+                    var source = GetSafeChildPath(sourceRoot, candidate.RelativePath);
                     if (!File.Exists(source)) throw new FileNotFoundException("待确认的存档候选已经不存在。", source);
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                     File.Copy(source, target, true);
@@ -159,7 +164,7 @@ public static class SaveSnapshotService
 
             DeleteEmptyDirectories(workingDirectory);
             var snapshotId = Guid.NewGuid();
-            var after = await CaptureManifestAsync(game, candidates[0].SnapshotKind, workingDirectory, snapshotId, token);
+            var after = await CaptureManifestAsync(state, game, candidates[0].SnapshotKind, workingDirectory, snapshotId, token, candidates);
             if (before.ContentFingerprint.Equals(after.ContentFingerprint, StringComparison.OrdinalIgnoreCase))
             {
                 Directory.Delete(workingDirectory, true);
@@ -254,9 +259,20 @@ public static class SaveSnapshotService
         foreach (var candidate in candidates)
         {
             candidate.Decision = SaveCandidateDecisions.Confirmed;
-            if (!state.SaveFileRules.Any(item => item.GameId == game.Id && item.SourceKind == "游戏目录" && item.RelativePath.Equals(candidate.RelativePath, StringComparison.OrdinalIgnoreCase)))
-                state.SaveFileRules.Add(new SaveFileRuleItem { GameId = game.Id, RelativePath = candidate.RelativePath });
-            state.SaveFileExclusions.RemoveAll(item => item.GameId == game.Id && item.SourceKind == "游戏目录" && item.RelativePath.Equals(candidate.RelativePath, StringComparison.OrdinalIgnoreCase));
+            if (!state.SaveFileRules.Any(item => item.GameId == game.Id && item.SourceKind == candidate.SourceKind && item.SourceRootPath.Equals(candidate.SourceRootPath, StringComparison.OrdinalIgnoreCase) && item.RelativePath.Equals(candidate.RelativePath, StringComparison.OrdinalIgnoreCase)))
+                state.SaveFileRules.Add(new SaveFileRuleItem
+                {
+                    GameId = game.Id,
+                    RelativePath = candidate.RelativePath,
+                    SourceKind = candidate.SourceKind,
+                    SourceRootPath = candidate.SourceRootPath,
+                    StorageRelativePath = string.IsNullOrWhiteSpace(candidate.StorageRelativePath) ? candidate.RelativePath : candidate.StorageRelativePath
+                });
+            if (candidate.SourceKind == "系统目录" && Directory.Exists(candidate.SourceRootPath)) SystemSaveMonitoringService.EnsureDirectoryRule(state, game, candidate.SourceRootPath, true);
+            state.SaveFileExclusions.RemoveAll(item => item.GameId == game.Id
+                && item.SourceKind == candidate.SourceKind
+                && item.SourceRootPath.Equals(candidate.SourceRootPath, StringComparison.OrdinalIgnoreCase)
+                && item.RelativePath.Equals(candidate.RelativePath, StringComparison.OrdinalIgnoreCase));
         }
     }
 
@@ -265,8 +281,8 @@ public static class SaveSnapshotService
         foreach (var candidate in state.SaveCandidates.Where(item => candidateIds.Contains(item.Id) && item.GameId == game.Id))
         {
             candidate.Decision = SaveCandidateDecisions.Excluded;
-            if (!state.SaveFileExclusions.Any(item => item.GameId == game.Id && item.SourceKind == candidate.SourceKind && item.RelativePath.Equals(candidate.RelativePath, StringComparison.OrdinalIgnoreCase)))
-                state.SaveFileExclusions.Add(new SaveFileExclusionItem { GameId = game.Id, RelativePath = candidate.RelativePath, SourceKind = candidate.SourceKind });
+            if (!state.SaveFileExclusions.Any(item => item.GameId == game.Id && item.SourceKind == candidate.SourceKind && item.SourceRootPath.Equals(candidate.SourceRootPath, StringComparison.OrdinalIgnoreCase) && item.RelativePath.Equals(candidate.RelativePath, StringComparison.OrdinalIgnoreCase)))
+                state.SaveFileExclusions.Add(new SaveFileExclusionItem { GameId = game.Id, RelativePath = candidate.RelativePath, SourceKind = candidate.SourceKind, SourceRootPath = candidate.SourceRootPath });
         }
     }
 
@@ -277,7 +293,7 @@ public static class SaveSnapshotService
         UpdateCleanupSuggestions(state, snapshot.GameId, snapshot.SnapshotKind);
     }
 
-    private static async Task<SaveSnapshotManifest> CaptureManifestAsync(GameItem game, string snapshotKind, string directory, Guid snapshotId, CancellationToken token)
+    private static async Task<SaveSnapshotManifest> CaptureManifestAsync(AppState state, GameItem game, string snapshotKind, string directory, Guid snapshotId, CancellationToken token, IReadOnlyCollection<SaveCandidateItem>? pendingCandidates = null)
     {
         var files = new List<SaveSnapshotFileItem>();
         if (Directory.Exists(directory))
@@ -286,13 +302,19 @@ public static class SaveSnapshotService
             {
                 token.ThrowIfCancellationRequested();
                 var info = new FileInfo(path);
-                files.Add(new SaveSnapshotFileItem { RelativePath = Path.GetRelativePath(directory, path), FileSize = info.Length, Sha256 = await FileFingerprintService.ComputeSha256Async(path, token) });
+                var relativePath = Path.GetRelativePath(directory, path);
+                var rule = state.SaveFileRules.LastOrDefault(item => item.GameId == game.Id && (string.IsNullOrWhiteSpace(item.StorageRelativePath) ? item.RelativePath : item.StorageRelativePath).Equals(relativePath, StringComparison.OrdinalIgnoreCase));
+                var pending = pendingCandidates?.LastOrDefault(item => (string.IsNullOrWhiteSpace(item.StorageRelativePath) ? item.RelativePath : item.StorageRelativePath).Equals(relativePath, StringComparison.OrdinalIgnoreCase));
+                var sourceKind = rule?.SourceKind ?? pending?.SourceKind ?? "游戏目录";
+                var originalPath = rule is not null ? Path.Combine(rule.SourceRootPath, rule.RelativePath) : pending is not null ? Path.Combine(pending.SourceRootPath, pending.RelativePath) : Path.Combine(game.PlayableRootPath ?? string.Empty, relativePath);
+                files.Add(new SaveSnapshotFileItem { RelativePath = relativePath, SourceKind = sourceKind, OriginalPath = originalPath, FileSize = info.Length, Sha256 = await FileFingerprintService.ComputeSha256Async(path, token) });
             }
         }
         using var aggregate = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         foreach (var file in files)
         {
             aggregate.AppendData(Encoding.UTF8.GetBytes(file.RelativePath.Replace('\\', '/').ToLowerInvariant()));
+            aggregate.AppendData(Encoding.UTF8.GetBytes(file.OriginalPath.ToLowerInvariant()));
             aggregate.AppendData(BitConverter.GetBytes(file.FileSize));
             aggregate.AppendData(Convert.FromHexString(file.Sha256));
         }

@@ -17,6 +17,8 @@ public sealed class AppState
     public List<SaveFileExclusionItem> SaveFileExclusions { get; set; } = [];
     public List<SaveCandidateItem> SaveCandidates { get; set; } = [];
     public List<SaveSnapshotItem> SaveSnapshots { get; set; } = [];
+    public List<SystemSaveDirectoryRuleItem> SystemSaveDirectories { get; set; } = [];
+    public List<SystemMonitorSessionItem> SystemMonitorSessions { get; set; } = [];
     public List<OperationTaskItem> OperationTasks { get; set; } = [];
 }
 
@@ -69,6 +71,8 @@ public sealed class GameItem
     public long? LastRunDurationSeconds { get; set; }
     public bool HasLocalSave { get; set; }
     public Guid? CurrentSaveGameDiskId { get; set; }
+    public bool SystemSaveInitialScanCompleted { get; set; }
+    public DateTime? SystemSaveInitialScanCompletedAt { get; set; }
     public List<GameVersionItem> Versions { get; set; } = [];
     [JsonIgnore] public string SourcePathStatus => File.Exists(SourcePath) || Directory.Exists(SourcePath) ? "有效" : "失效";
     [JsonIgnore] public string? IconFullPath => string.IsNullOrWhiteSpace(IconRelativePath) ? null : System.IO.Path.Combine(AppPaths.Root, IconRelativePath);
@@ -142,6 +146,8 @@ public sealed class SaveFileRuleItem
     public Guid GameId { get; set; }
     public string RelativePath { get; set; } = string.Empty;
     public string SourceKind { get; set; } = "游戏目录";
+    public string SourceRootPath { get; set; } = string.Empty;
+    public string StorageRelativePath { get; set; } = string.Empty;
     public DateTime ConfirmedAt { get; set; } = DateTime.Now;
 }
 
@@ -151,6 +157,7 @@ public sealed class SaveFileExclusionItem
     public Guid GameId { get; set; }
     public string RelativePath { get; set; } = string.Empty;
     public string SourceKind { get; set; } = "游戏目录";
+    public string SourceRootPath { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 }
 
@@ -162,13 +169,16 @@ public sealed class SaveCandidateItem
     public string GameName { get; set; } = string.Empty;
     public string SourceKind { get; set; } = "游戏目录";
     public string SourcePath { get; set; } = string.Empty;
+    public string SourceRootPath { get; set; } = string.Empty;
     public string RelativePath { get; set; } = string.Empty;
+    public string StorageRelativePath { get; set; } = string.Empty;
     public string ChangeType { get; set; } = string.Empty;
     public long FileSize { get; set; }
     public DateTime? ModifiedAt { get; set; }
     public string Sha256 { get; set; } = string.Empty;
     public bool DefaultExcluded { get; set; }
     public bool PreviouslyConfirmed { get; set; }
+    public bool SharedDirectory { get; set; }
     public string ExclusionReason { get; set; } = string.Empty;
     public string Decision { get; set; } = SaveCandidateDecisions.Pending;
     public string SnapshotKind { get; set; } = SaveSnapshotKinds.Normal;
@@ -176,6 +186,7 @@ public sealed class SaveCandidateItem
     [JsonIgnore] public string FileSizeText => SizeFormatter.Format(FileSize);
     [JsonIgnore] public string DefaultExcludedText => DefaultExcluded ? ExclusionReason : "否";
     [JsonIgnore] public string PreviouslyConfirmedText => PreviouslyConfirmed ? "是" : "否";
+    [JsonIgnore] public string SharedDirectoryText => SharedDirectory ? "是，需再次确认" : "否";
     [JsonIgnore] public bool SourceExists => File.Exists(SourcePath);
 }
 
@@ -215,8 +226,43 @@ public sealed class SaveSnapshotManifest
 public sealed class SaveSnapshotFileItem
 {
     public string RelativePath { get; set; } = string.Empty;
+    public string SourceKind { get; set; } = "游戏目录";
+    public string OriginalPath { get; set; } = string.Empty;
     public long FileSize { get; set; }
     public string Sha256 { get; set; } = string.Empty;
+}
+
+public sealed class SystemSaveDirectoryRuleItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid GameId { get; set; }
+    public string Path { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public bool AutoDiscovered { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime? LastScannedAt { get; set; }
+    [JsonIgnore] public string PathStatus => Directory.Exists(Path) ? "有效" : "失效";
+}
+
+public sealed class SystemMonitorSessionItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid GameId { get; set; }
+    public string SnapshotFilePath { get; set; } = string.Empty;
+    public List<string> DirectoryPaths { get; set; } = [];
+    public bool IsInitialCommonScan { get; set; }
+    public string Status { get; set; } = "监控中";
+    public DateTime StartedAt { get; set; } = DateTime.Now;
+    public DateTime? CompletedAt { get; set; }
+}
+
+public sealed class SystemFileSnapshotItem
+{
+    public string FullPath { get; set; } = string.Empty;
+    public string RootPath { get; set; } = string.Empty;
+    public long FileSize { get; set; }
+    public DateTime ModifiedAt { get; set; }
 }
 
 public static class SaveCandidateDecisions

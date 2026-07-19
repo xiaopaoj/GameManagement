@@ -717,6 +717,116 @@ public sealed class ModelTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public async Task 系统存档监控应检测新增修改删除并清理扫描缓存()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var modifiedPath = Path.Combine(root, "modified.sav");
+        var deletedPath = Path.Combine(root, "deleted.sav");
+        await File.WriteAllTextAsync(modifiedPath, "原内容");
+        await File.WriteAllTextAsync(deletedPath, "待删除");
+        var game = new GameItem { DisplayName = "系统存档监控", SystemSaveInitialScanCompleted = true, CurrentVersionId = Guid.NewGuid() };
+        var state = new AppState { Games = [game] };
+        state.SystemSaveDirectories.Add(new SystemSaveDirectoryRuleItem { GameId = game.Id, Path = root, DisplayName = "测试目录" });
+        try
+        {
+            var session = await SystemSaveMonitoringService.BeginSessionAsync(state, game);
+            Assert.NotNull(session);
+            Assert.True(File.Exists(session!.SnapshotFilePath));
+
+            await File.WriteAllTextAsync(modifiedPath, "修改后的内容更长");
+            File.Delete(deletedPath);
+            await File.WriteAllTextAsync(Path.Combine(root, "created.sav"), "新增内容");
+
+            var candidates = await SystemSaveMonitoringService.CompleteSessionAsync(state, game, SaveSnapshotKinds.Normal);
+
+            Assert.Contains(candidates, item => item.RelativePath == "modified.sav" && item.ChangeType == "修改");
+            Assert.Contains(candidates, item => item.RelativePath == "deleted.sav" && item.ChangeType == "删除");
+            Assert.Contains(candidates, item => item.RelativePath == "created.sav" && item.ChangeType == "新增");
+            Assert.All(candidates, item => Assert.Equal(root, item.SourceRootPath, ignoreCase: true));
+            Assert.Equal("已完成", session.Status);
+            Assert.False(File.Exists(session.SnapshotFilePath));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 首次系统扫描应以文件父目录为监控根目录且保留共享确认要求()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var child = Path.Combine(root, "厂商", "游戏");
+        Directory.CreateDirectory(child);
+        var path = Path.Combine(child, "save.dat");
+        await File.WriteAllTextAsync(path, "存档");
+        var game = new GameItem { DisplayName = "首次扫描", CurrentVersionId = Guid.NewGuid() };
+        var other = new GameItem { DisplayName = "共享游戏" };
+        var state = new AppState { Games = [game, other] };
+        state.SystemSaveDirectories.Add(new SystemSaveDirectoryRuleItem { GameId = game.Id, Path = child, DisplayName = "共享目录" });
+        state.SystemSaveDirectories.Add(new SystemSaveDirectoryRuleItem { GameId = other.Id, Path = child, DisplayName = "共享目录" });
+        try
+        {
+            var candidates = await SystemSaveMonitoringService.CompareAsync(
+                state,
+                game,
+                SaveSnapshotKinds.Normal,
+                true,
+                [],
+                [new SystemFileSnapshotItem { FullPath = path, RootPath = root, FileSize = new FileInfo(path).Length, ModifiedAt = File.GetLastWriteTime(path) }],
+                CancellationToken.None);
+
+            var candidate = Assert.Single(candidates);
+            Assert.Equal(child, candidate.SourceRootPath, ignoreCase: true);
+            Assert.Equal("save.dat", candidate.RelativePath);
+            Assert.True(candidate.SharedDirectory);
+            Assert.True(candidate.DefaultExcluded);
+            Assert.Contains("共享目录", candidate.ExclusionReason);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 确认系统存档候选后应写入隔离目录并记录原始路径()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var systemRoot = Path.Combine(root, "system-save");
+        var playable = Path.Combine(root, "playable");
+        var diskRoot = Path.Combine(root, "disk");
+        Directory.CreateDirectory(systemRoot); Directory.CreateDirectory(playable); Directory.CreateDirectory(diskRoot);
+        var disk = new GameDiskItem { RootPath = diskRoot };
+        var game = new GameItem
+        {
+            DisplayName = "系统存档快照",
+            PlayableRootPath = playable,
+            CurrentGameDiskId = disk.Id,
+            CurrentVersionId = Guid.NewGuid(),
+            SystemSaveInitialScanCompleted = true
+        };
+        var state = new AppState { Games = [game], GameDisks = [disk] };
+        state.SystemSaveDirectories.Add(new SystemSaveDirectoryRuleItem { GameId = game.Id, Path = systemRoot, DisplayName = "系统存档" });
+        try
+        {
+            await SystemSaveMonitoringService.BeginSessionAsync(state, game);
+            var source = Path.Combine(systemRoot, "slot1.sav");
+            await File.WriteAllTextAsync(source, "第一槽存档");
+            var candidates = await SystemSaveMonitoringService.CompleteSessionAsync(state, game, SaveSnapshotKinds.Normal);
+            SystemSaveMonitoringService.ReplaceDetectedCandidates(state, game, candidates);
+            var candidate = Assert.Single(candidates);
+
+            var result = await SaveSnapshotService.ApplyAndCreateAsync(state, game, [candidate.Id]);
+
+            Assert.True(result.ContentChanged);
+            var currentFile = Path.Combine(GameSavePathService.GetCurrentDirectory(state, game), candidate.StorageRelativePath);
+            Assert.True(File.Exists(currentFile));
+            Assert.Contains(state.SaveFileRules, item => item.GameId == game.Id && item.SourceKind == "系统目录" && item.SourceRootPath.Equals(systemRoot, StringComparison.OrdinalIgnoreCase));
+            var manifest = JsonSerializer.Deserialize<SaveSnapshotManifest>(await File.ReadAllTextAsync(result.Snapshot!.ManifestPath));
+            var manifestFile = Assert.Single(manifest!.Files);
+            Assert.Equal(source, manifestFile.OriginalPath, ignoreCase: true);
+            Assert.Equal("系统目录", manifestFile.SourceKind);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

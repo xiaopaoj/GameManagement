@@ -125,6 +125,16 @@ public partial class SaveManagementWindow : Window
         _save($"已按具体文件排除 {selected.Count} 个存档候选"); RefreshLists();
     }
 
+    private void CompleteInitialScan_Click(object sender, RoutedEventArgs e)
+    {
+        var game = SelectedGame;
+        if (game is null) { ShowError("请先选择一个具体游戏。 "); return; }
+        if (game.SystemSaveInitialScanCompleted) { StatusText.Text = "该游戏的首次系统存档扫描已经确认完成。"; return; }
+        var pendingSystemCandidates = _state.SaveCandidates.Count(item => item.GameId == game.Id && item.SourceKind == "系统目录" && item.Decision == SaveCandidateDecisions.Pending);
+        if (pendingSystemCandidates > 0 && MessageBox.Show($"仍有 {pendingSystemCandidates} 个系统目录候选未处理。确认完成后，后续运行将只监控已配置目录。是否仍要完成首次扫描？", "首次扫描完成确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        SystemSaveMonitoringService.MarkInitialScanCompleted(game); _save("首次系统存档扫描已确认完成"); RefreshLists();
+    }
+
     private void PreviewCandidate_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedCandidate is null) return;
