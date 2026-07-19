@@ -1,0 +1,79 @@
+# .NET 编译输出
+**/bin/
+**/obj/
+build/
+artifacts/
+publish/
+
+# 项目内安装的 .NET SDK，保留安装脚本
+tools/dotnet/
+tools/*.zip
+tools/*.tmp
+
+# 软件运行数据和日志
+data/
+logs/
+**/data/
+**/logs/
+*.log
+*.log.*
+
+# 临时任务、缓存和备份
+temp/
+tmp/
+cache/
+**/.cache/
+*.tmp
+*.bak
+*.old
+*.user
+*.suo
+
+# Visual Studio
+.vs/
+*.userosscache
+*.sln.docstates
+TestResults/
+GeneratedFiles/
+
+# JetBrains Rider / ReSharper
+.idea/
+_ReSharper*/
+*.DotSettings.user
+
+# Visual Studio Code
+.vscode/
+
+# 测试与覆盖率
+coverage/
+coverage.*
+*.coverage
+*.coveragexml
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# Windows 系统文件
+Thumbs.db
+Thumbs.db:encryptable
+Desktop.ini
+$RECYCLE.BIN/
+
+# 崩溃转储和诊断文件
+*.dmp
+*.dump
+*.etl
+
+# 发布证书和敏感文件
+*.pfx
+*.p12
+*.cer
+*.key
+*.secrets.json
+
+# 本地环境配置
+.env
+.env.*
+!.env.example
