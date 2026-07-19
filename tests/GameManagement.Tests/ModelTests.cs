@@ -966,6 +966,106 @@ public sealed class ModelTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public async Task 单游戏手动备份应生成可读无密码ZIP并通过文件Hash校验()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var diskRoot = Path.Combine(root, "disk");
+        var backupRoot = Path.Combine(root, "external-backup");
+        Directory.CreateDirectory(diskRoot); Directory.CreateDirectory(backupRoot);
+        var disk = new GameDiskItem { RootPath = diskRoot };
+        var game = new GameItem { DisplayName = "手动备份测试", CurrentGameDiskId = disk.Id, CurrentSaveGameDiskId = disk.Id, CurrentVersionId = Guid.NewGuid(), CurrentVersionName = "1.0" };
+        var state = new AppState { Games = [game], GameDisks = [disk] };
+        try
+        {
+            BackupTargetService.Configure(state.BackupSettings, backupRoot);
+            var saveRoot = GameSavePathService.GetGameSaveRoot(state, game);
+            var current = Path.Combine(saveRoot, "current");
+            Directory.CreateDirectory(current);
+            var source = Path.Combine(current, "slot.sav");
+            await File.WriteAllTextAsync(source, "需要外部备份的存档");
+            var manifest = new SaveSnapshotManifest
+            {
+                SnapshotId = Guid.NewGuid(), GameId = game.Id, GameVersionId = game.CurrentVersionId!.Value, ContentFingerprint = "manual-fingerprint",
+                Files = [new SaveSnapshotFileItem { RelativePath = "slot.sav", OriginalPath = Path.Combine(diskRoot, "Games", "slot.sav"), FileSize = new FileInfo(source).Length, Sha256 = await FileFingerprintService.ComputeSha256Async(source) }]
+            };
+            await File.WriteAllTextAsync(Path.Combine(saveRoot, "manifest.json"), JsonSerializer.Serialize(manifest));
+
+            var result = await ExternalBackupService.CreateManualGameBackupAsync(state, game);
+
+            Assert.NotNull(result.Backup);
+            Assert.True(result.Backup!.Verified);
+            Assert.True(await ExternalBackupService.VerifyAsync(result.Backup));
+            using var archive = ZipFile.OpenRead(result.Backup.FilePath);
+            Assert.NotNull(archive.GetEntry("manifest.json"));
+            Assert.NotNull(archive.GetEntry($"GameSave/{game.Id:N}/current/slot.sav"));
+            var externalManifest = ExternalBackupService.ReadManifest(result.Backup.FilePath);
+            Assert.Equal(manifest.ContentFingerprint, externalManifest.ContentFingerprint);
+            Assert.Contains(externalManifest.Files, item => item.OriginalRestorePath.EndsWith("slot.sav", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 完整计划备份应合并多个游戏盘避免重复并只标记三个保留版本()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var disk1Root = Path.Combine(root, "disk1");
+        var disk2Root = Path.Combine(root, "disk2");
+        var backupRoot = Path.Combine(root, "backups");
+        Directory.CreateDirectory(Path.Combine(disk1Root, "GameSave", "game1"));
+        Directory.CreateDirectory(Path.Combine(disk2Root, "GameSave", "game2"));
+        Directory.CreateDirectory(backupRoot);
+        var disk1 = new GameDiskItem { DisplayName = "盘一", RootPath = disk1Root };
+        var disk2 = new GameDiskItem { DisplayName = "盘二", RootPath = disk2Root };
+        var state = new AppState { GameDisks = [disk1, disk2] };
+        try
+        {
+            BackupTargetService.Configure(state.BackupSettings, backupRoot);
+            var file1 = Path.Combine(disk1Root, "GameSave", "game1", "save.dat");
+            var file2 = Path.Combine(disk2Root, "GameSave", "game2", "save.dat");
+            await File.WriteAllTextAsync(file1, "盘一存档-0");
+            await File.WriteAllTextAsync(file2, "盘二存档");
+
+            var first = await ExternalBackupService.CreateScheduledFullBackupAsync(state);
+            var unchanged = await ExternalBackupService.CreateScheduledFullBackupAsync(state);
+
+            Assert.NotNull(first.Backup);
+            Assert.True(unchanged.SkippedUnchanged);
+            Assert.Single(state.ExternalBackups);
+            var manifest = ExternalBackupService.ReadManifest(first.Backup!.FilePath);
+            Assert.Contains(manifest.Files, item => item.ZipPath.StartsWith($"game-disk-{disk1.Id:N}/GameSave/", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(manifest.Files, item => item.ZipPath.StartsWith($"game-disk-{disk2.Id:N}/GameSave/", StringComparison.OrdinalIgnoreCase));
+
+            for (var index = 1; index <= 3; index++)
+            {
+                await File.WriteAllTextAsync(file1, $"盘一存档-{index}");
+                await ExternalBackupService.CreateScheduledFullBackupAsync(state);
+            }
+            Assert.Equal(4, state.ExternalBackups.Count);
+            Assert.Single(state.ExternalBackups, item => item.CleanupSuggested);
+            Assert.All(state.ExternalBackups, item => Assert.True(File.Exists(item.FilePath)));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 计划备份目标磁盘离线时应标记等待补执行()
+    {
+        var usedRoots = DriveInfo.GetDrives().Select(item => item.Name[..1].ToUpperInvariant()).ToHashSet();
+        var unused = Enumerable.Range('D', 23).Select(value => ((char)value).ToString()).First(letter => !usedRoots.Contains(letter));
+        var state = new AppState();
+        state.BackupSettings.BackupDirectory = $@"{unused}:\GameManagementBackup";
+        state.BackupSettings.RelativeDirectory = "GameManagementBackup";
+
+        var result = await ExternalBackupService.CreateScheduledFullBackupAsync(state);
+
+        Assert.True(result.WaitingForTarget);
+        Assert.True(state.BackupSettings.PendingScheduledBackup);
+        Assert.Equal("等待目标磁盘", state.BackupSettings.LastStatus);
+        Assert.NotNull(state.BackupSettings.PendingSince);
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

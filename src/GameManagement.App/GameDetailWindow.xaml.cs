@@ -278,7 +278,22 @@ public partial class GameDetailWindow : Window
     }
     private async void Archive_Click(object sender, RoutedEventArgs e) => await ArchiveCurrentAsync(false);
     private void SpecialArchive_Click(object sender, RoutedEventArgs e) => ShowFeature("特殊归档", "选择已有的混乱游戏目录，与从原始压缩文件构建的干净基准目录比较后提取存档。");
-    private void ManualBackup_Click(object sender, RoutedEventArgs e) => ShowFeature("手动备份", "将当前游戏的本地存档创建为无密码 ZIP，完成文件清单和 Hash 校验。");
+    private async void ManualBackup_Click(object sender, RoutedEventArgs e)
+    {
+        var progress = new PreparationProgressWindow("正在创建并校验单游戏无密码 ZIP 备份") { Owner = this };
+        using var cancellation = new CancellationTokenSource();
+        progress.EnableCancellation(cancellation.Cancel);
+        IsEnabled = false; progress.Show();
+        try
+        {
+            var result = await ExternalBackupService.CreateManualGameBackupAsync(_state, _game, cancellation.Token);
+            _save(result.Message);
+            MessageBox.Show(result.Message, "手动备份完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (OperationCanceledException) { MessageBox.Show("手动备份已取消，临时 ZIP 已自动清理。", "已取消", MessageBoxButton.OK, MessageBoxImage.Information); }
+        catch (Exception ex) { AppLogger.Error($"手动备份失败：{_game.DisplayName}", ex); ShowError(ex.Message); }
+        finally { IsEnabled = true; progress.CloseSafely(); }
+    }
     private void SaveDirectories_Click(object sender, RoutedEventArgs e) => new SystemSaveDirectoryWindow(_game, _state, _save) { Owner = this }.ShowDialog();
     private void Snapshots_Click(object sender, RoutedEventArgs e) => new SaveManagementWindow(_state, _save, _game) { Owner = this }.ShowDialog();
     private async void Versions_Click(object sender, RoutedEventArgs e)

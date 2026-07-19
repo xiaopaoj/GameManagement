@@ -20,6 +20,7 @@ public sealed class AppState
     public List<SystemSaveDirectoryRuleItem> SystemSaveDirectories { get; set; } = [];
     public List<SystemMonitorSessionItem> SystemMonitorSessions { get; set; } = [];
     public List<ExternalBackupItem> ExternalBackups { get; set; } = [];
+    public BackupSettingsItem BackupSettings { get; set; } = new();
     public List<OperationTaskItem> OperationTasks { get; set; } = [];
 }
 
@@ -252,10 +253,54 @@ public sealed class ExternalBackupItem
     public long FileSize { get; set; }
     public string Sha256 { get; set; } = string.Empty;
     public bool Verified { get; set; }
+    public bool CleanupSuggested { get; set; }
+    public string Status { get; set; } = "已完成";
+    public string ErrorMessage { get; set; } = string.Empty;
+    public List<Guid> SourceGameDiskIds { get; set; } = [];
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public DateTime? VerifiedAt { get; set; }
     [JsonIgnore] public string FileSizeText => SizeFormatter.Format(FileSize);
     [JsonIgnore] public string VerifiedText => Verified ? "已校验" : "校验失败";
+    [JsonIgnore] public string CleanupSuggestionText => CleanupSuggested ? "建议清理" : "保留";
+}
+
+public sealed class BackupSettingsItem
+{
+    public string BackupDirectory { get; set; } = string.Empty;
+    public string VolumeLabel { get; set; } = string.Empty;
+    public uint VolumeSerialNumber { get; set; }
+    public string RelativeDirectory { get; set; } = string.Empty;
+    public bool DailyEnabled { get; set; }
+    public string DailyTime { get; set; } = "02:00";
+    public bool PendingScheduledBackup { get; set; }
+    public DateTime? PendingSince { get; set; }
+    public DateTime? LastRunAt { get; set; }
+    public string LastStatus { get; set; } = "尚未执行";
+    public string LastError { get; set; } = string.Empty;
+    public string LastContentFingerprint { get; set; } = string.Empty;
+}
+
+public sealed class ExternalBackupManifest
+{
+    public string BackupKind { get; set; } = string.Empty;
+    public Guid? GameId { get; set; }
+    public string GameName { get; set; } = string.Empty;
+    public Guid? GameVersionId { get; set; }
+    public string GameVersionName { get; set; } = string.Empty;
+    public Guid? SaveSnapshotId { get; set; }
+    public string ContentFingerprint { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public List<Guid> SourceGameDiskIds { get; set; } = [];
+    public List<ExternalBackupFileItem> Files { get; set; } = [];
+}
+
+public sealed class ExternalBackupFileItem
+{
+    public string ZipPath { get; set; } = string.Empty;
+    public string SourcePath { get; set; } = string.Empty;
+    public string OriginalRestorePath { get; set; } = string.Empty;
+    public long FileSize { get; set; }
+    public string Sha256 { get; set; } = string.Empty;
 }
 
 public sealed class SystemSaveDirectoryRuleItem

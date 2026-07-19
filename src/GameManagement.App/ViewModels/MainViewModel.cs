@@ -86,6 +86,7 @@ public sealed class MainViewModel : ObservableObject
         LaunchGameCommand = new RelayCommand(LaunchGame); OpenGameFolderCommand = new RelayCommand(OpenGameFolder); ReloadCommand = new RelayCommand(Reload);
         OpenTaskFolderCommand = new RelayCommand(OpenTaskFolder); CleanupTaskTempCommand = new RelayCommand(CleanupTaskTemp); OpenTaskGameCommand = new RelayCommand(OpenTaskGame); ShowTaskErrorCommand = new RelayCommand(ShowTaskError);
         GameProcessMonitorService.Restore(_state.Games, OnGameStateChanged);
+        _ = TryRunPendingBackupAsync();
     }
 
     private void LoadCollections()
@@ -372,6 +373,23 @@ public sealed class MainViewModel : ObservableObject
         var choiceWindow = new ChoiceWindow("选择游戏", "请选择需要管理系统存档目录的游戏：", choices) { Owner = Application.Current.MainWindow };
         if (choiceWindow.ShowDialog() != true || choiceWindow.SelectedChoice?.Value is not GameItem game) return;
         new SystemSaveDirectoryWindow(game, _state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();
+    }
+
+    public void OpenBackupManagement(string filter = "全部") => new BackupManagementWindow(_state, message => Save(message), filter) { Owner = Application.Current.MainWindow }.ShowDialog();
+
+    public void OpenBackupSchedule() => new BackupScheduleWindow(_state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();
+
+    private async Task TryRunPendingBackupAsync()
+    {
+        if (!_state.BackupSettings.PendingScheduledBackup || BackupTargetService.Resolve(_state.BackupSettings, false) is null) return;
+        try
+        {
+            var result = await ExternalBackupService.CreateScheduledFullBackupAsync(_state);
+            _store.Save(_state);
+            StatusMessage = $"离线备份补执行：{result.Status}";
+            await BackupNotificationService.ShowAsync("游戏管理软件备份", result.Message, result.WaitingForTarget ? System.Windows.Forms.ToolTipIcon.Warning : System.Windows.Forms.ToolTipIcon.Info);
+        }
+        catch (Exception ex) { AppLogger.Error("主程序启动后补执行等待备份失败", ex); }
     }
 
     public void OpenSelectedGameDetails()
