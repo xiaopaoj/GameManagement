@@ -74,6 +74,7 @@ public sealed class GameItem
     public int? LastExitCode { get; set; }
     public long? LastRunDurationSeconds { get; set; }
     public bool HasLocalSave { get; set; }
+    public bool HasSystemSave { get; set; } = true;
     public Guid? CurrentSaveGameDiskId { get; set; }
     public bool SystemSaveInitialScanCompleted { get; set; }
     public DateTime? SystemSaveInitialScanCompletedAt { get; set; }
@@ -103,6 +104,7 @@ public sealed class GameVersionItem
     public Guid? GameDiskId { get; set; }
     public string? FirstArchiveRelativePath { get; set; }
     public string? SecondArchiveRelativePath { get; set; }
+    public string? ExecutableRelativePath { get; set; }
     public string FirstArchiveFormat { get; set; } = string.Empty;
     public string SecondArchiveFormat { get; set; } = string.Empty;
     public bool SecondArchiveUsedFallback { get; set; }

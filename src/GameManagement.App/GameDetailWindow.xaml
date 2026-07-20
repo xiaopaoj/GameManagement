@@ -15,7 +15,7 @@
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <TextBlock Text="游戏 ID" FontWeight="SemiBold"/><TextBox Grid.Column="1" Text="{Binding Id}" IsReadOnly="True" BorderThickness="0" Background="Transparent"/>
                 <TextBlock Grid.Row="1" Text="当前版本" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding CurrentVersionName}" Margin="0,8,0,0"/>
@@ -33,6 +33,7 @@
                 <TextBlock Grid.Row="13" Text="本地存档" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="13" Grid.Column="1" Text="{Binding LocalSaveStatus}" Margin="0,8,0,0"/>
                 <TextBlock Grid.Row="14" Text="归档状态" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="14" Grid.Column="1" Text="{Binding ArchiveStatus}" Margin="0,8,0,0"/>
                 <TextBlock Grid.Row="15" Text="目录清理状态" FontWeight="SemiBold" Margin="0,8,0,0"/><TextBlock Grid.Row="15" Grid.Column="1" Text="{Binding DirectoryCleanupStatus}" Margin="0,8,0,0"/>
+                <TextBlock Grid.Row="16" Text="系统存档" FontWeight="SemiBold" Margin="0,8,0,0"/><CheckBox Grid.Row="16" Grid.Column="1" Content="此游戏存在 Windows 系统目录存档" IsChecked="{Binding HasSystemSave, Mode=TwoWay}" Checked="HasSystemSave_Changed" Unchecked="HasSystemSave_Changed" Margin="0,8,0,0"/>
             </Grid>
         </Border>
 

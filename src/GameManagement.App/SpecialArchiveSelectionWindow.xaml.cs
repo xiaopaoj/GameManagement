@@ -14,7 +14,7 @@ public partial class SpecialArchiveSelectionWindow : Window
         DifferenceGrid.ItemsSource = differences;
         ModeText.Text = completeBaseline
             ? "已建立完整干净基线。列表显示新增、修改、缺失及默认排除文件；只有新增和修改项可作为存档。请按 Ctrl 或 Shift 多选。"
-            : "无完整基线：软件禁止自动判断。下方所有文件都必须由你人工选择，未选择文件不会被归档；在完成有效外部备份前不会删除混乱目录。";
+            : "无完整基线：软件禁止自动判断。下方所有文件都必须由你人工选择，未选择文件不会被归档；本地存档与清单校验完成后才允许删除混乱目录。";
     }
 
     private void Confirm_Click(object sender, RoutedEventArgs e)

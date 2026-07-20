@@ -202,7 +202,8 @@ public partial class GameDetailWindow : Window
             UpdatePreparationTask(task, progress, 75, "正在递归查找第一个有效 EXE 并确定游戏目录…", finalExtractionRoot, "等待确认游戏目录");
             var launchDiscovery = await Task.Run(() => ExecutableDiscoveryService.Discover(finalExtractionRoot, cancellation.Token), cancellation.Token);
             progress.Hide(); IsEnabled = true;
-            var launchSelection = SelectLaunchFile(finalExtractionRoot, launchDiscovery);
+            var launchSelection = ExecutableDiscoveryService.ResolveRecordedSelection(finalExtractionRoot, version.ExecutableRelativePath, launchDiscovery?.GameRoot)
+                ?? SelectLaunchFile(finalExtractionRoot, launchDiscovery);
             if (launchSelection is null) throw new OperationCanceledException("用户取消了启动文件选择。", cancellation.Token);
             var launchFile = launchSelection.LaunchFile;
             var selectedGameRoot = launchSelection.GameRoot;
@@ -210,6 +211,7 @@ public partial class GameDetailWindow : Window
             IsEnabled = false; progress.Show(); UpdatePreparationTask(task, progress, 85, "正在整理最终游戏目录…", selectedGameRoot, "等待确认游戏目录");
             await SourceCopyService.CopyDirectoryAsync(selectedGameRoot, stagedFinal, cancellation.Token);
             var executableRelativePath = Path.GetRelativePath(selectedGameRoot, launchFile);
+            version.ExecutableRelativePath = executableRelativePath;
 
             UpdatePreparationTask(task, progress, 92, "正在计算游戏文件 SHA-256 基线，这可能需要较长时间…", stagedFinal, "等待确认游戏目录");
             var baselines = await BaselineService.BuildAsync(_game.Id, version.Id, stagedFinal, cancellation.Token);
@@ -364,17 +366,10 @@ public partial class GameDetailWindow : Window
             var snapshotResult = await SaveSnapshotService.ApplyAndCreateAsync(_state, _game, candidates.Select(item => item.Id).ToList(), cancellation.Token);
             _save("特殊归档本地存档快照已创建并校验");
 
-            progress.Hide(); IsEnabled = true;
-            if (MessageBox.Show("特殊归档的本地存档已经保存。归档前必须为最新 current 创建有效外部 ZIP 备份，是否立即执行手动备份？", "外部备份确认", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) throw new InvalidOperationException("最新存档尚未完成外部 ZIP 备份，混乱目录不会删除。");
-            IsEnabled = false; progress.Show();
-            task.Progress = 88; task.Message = "正在创建并校验外部 ZIP 备份"; progress.UpdateStatus(task.Message, 88);
-            await ExternalBackupService.CreateManualGameBackupAsync(_state, _game, cancellation.Token);
             var manifest = await CurrentSaveManifestService.LoadAsync(_state, _game, cancellation.Token) ?? throw new InvalidDataException("特殊归档 current 清单不存在。");
-            var backupValid = _state.ExternalBackups.Any(item => item.GameId == _game.Id && item.Verified && File.Exists(item.FilePath) && item.ContentFingerprint.Equals(manifest.ContentFingerprint, StringComparison.OrdinalIgnoreCase));
-            if (!backupValid) throw new InvalidDataException("特殊归档外部 ZIP 备份校验状态无效。");
             OrdinaryArchiveService.MarkArchived(_game, manifest);
-            _game.ArchiveMessage = $"特殊归档完成；基线状态：{_game.SpecialArchiveBaselineStatus}。";
-            _save("特殊归档及外部备份已完成");
+            _game.ArchiveMessage = $"特殊归档完成；基线状态：{_game.SpecialArchiveBaselineStatus}。本地存档与清单已校验，未要求外部 ZIP 备份。";
+            _save("特殊归档已完成，本次未校验外部 ZIP 备份");
 
             progress.Hide(); IsEnabled = true;
             if (MessageBox.Show($"特殊归档已完成。是否将所选混乱游戏目录移入 Windows 回收站？\n\n{mixedRoot}", "特殊归档目录清理确认", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
@@ -389,7 +384,7 @@ public partial class GameDetailWindow : Window
                 {
                     _state.DeletionHistory.Add(new DeletionHistoryItem { GameId = _game.Id, GameVersionId = version.Id, ObjectType = "特殊归档混乱目录", ObjectPath = mixedRoot, DeleteMethod = "Windows 回收站", Status = "失败", Message = ex.Message });
                     OrdinaryArchiveService.MarkCleanupFailed(_game, ex.Message);
-                    MessageBox.Show($"特殊归档和备份已经完成，但混乱目录未能进入回收站：{ex.Message}", "目录清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBox.Show($"特殊归档已经完成，但混乱目录未能进入回收站：{ex.Message}", "目录清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
             IsEnabled = false; progress.Show();
@@ -444,6 +439,8 @@ public partial class GameDetailWindow : Window
             var selection = SelectLaunchFile(_game.PlayableRootPath, discovery);
             if (selection is null) return;
             _game.ExecutableRelativePath = Path.GetRelativePath(_game.PlayableRootPath, selection.LaunchFile);
+            var version = _game.Versions.FirstOrDefault(item => item.Id == _game.CurrentVersionId);
+            if (version is not null) version.ExecutableRelativePath = Path.GetRelativePath(selection.GameRoot, selection.LaunchFile);
             _game.IconRelativePath = IconExtractionService.ExtractToCache(selection.LaunchFile, _game.Id);
             ConfirmDirectoryNameAsNote(selection.GameRoot);
             _save("游戏目录、启动文件和图标已重新识别");
@@ -493,6 +490,22 @@ public partial class GameDetailWindow : Window
     private async void Launch_Click(object sender, RoutedEventArgs e)
     {
         if (_game.Status == "运行中") { ShowError("该游戏的主程序已经在运行。 "); return; }
+        if (!_game.HasSystemSave)
+        {
+            try
+            {
+                SystemSaveMonitoringService.CancelLatestSession(_state, _game, "已跳过");
+                _save("该游戏已标记为不存在系统存档，本次跳过系统目录扫描");
+                GameProcessMonitorService.Launch(_game, (game, message) =>
+                {
+                    _gameStateChanged(game, message);
+                    Dispatcher.BeginInvoke(() => { if (IsLoaded) RefreshBindings(); });
+                });
+                RefreshBindings();
+            }
+            catch (Exception ex) { _save("游戏启动失败"); MessageBox.Show(ex.Message, "启动失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+            return;
+        }
         var progressWindow = new PreparationProgressWindow("正在建立系统存档监控快照") { Owner = this };
         using var cancellation = new CancellationTokenSource();
         progressWindow.EnableCancellation(cancellation.Cancel);
@@ -513,6 +526,17 @@ public partial class GameDetailWindow : Window
         catch (OperationCanceledException) { SystemSaveMonitoringService.CancelLatestSession(_state, _game, "已取消"); _save("游戏启动前的系统存档扫描已取消"); }
         catch (Exception ex) { SystemSaveMonitoringService.CancelLatestSession(_state, _game, "启动失败"); _save("游戏启动失败，系统存档监控快照已取消"); MessageBox.Show(ex.Message, "启动失败", MessageBoxButton.OK, MessageBoxImage.Error); }
         finally { IsEnabled = true; progressWindow.CloseSafely(); }
+    }
+
+    private void HasSystemSave_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded || DataContext is not GameItem game) return;
+        if (!game.HasSystemSave)
+        {
+            SystemSaveMonitoringService.CancelLatestSession(_state, game, "已关闭系统存档扫描");
+            _state.SaveCandidates.RemoveAll(item => item.GameId == game.Id && item.SourceKind == "系统目录" && item.Decision == SaveCandidateDecisions.Pending);
+        }
+        _save(game.HasSystemSave ? "已启用该游戏的系统存档扫描" : "已标记该游戏不存在系统存档，后续不再扫描系统目录");
     }
 
     private void EditGame_Click(object sender, RoutedEventArgs e)
@@ -576,8 +600,7 @@ public partial class GameDetailWindow : Window
             {
                 task.Status = "等待"; task.Message = string.Join("；", readiness.Problems); task.CompletedAt = DateTime.Now;
                 _game.Status = "可游玩"; _save("普通归档条件尚未满足"); RefreshBindings();
-                var needsBackup = readiness.Problems.Any(item => item.Contains("外部 ZIP 备份", StringComparison.Ordinal));
-                MessageBox.Show($"当前不能完成归档：\n\n- {string.Join("\n- ", readiness.Problems)}{(needsBackup ? "\n\n请先使用“手动备份”创建并校验最新存档的外部 ZIP。" : string.Empty)}", "归档条件未满足", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show($"当前不能完成归档：\n\n- {string.Join("\n- ", readiness.Problems)}", "归档条件未满足", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return false;
             }
 

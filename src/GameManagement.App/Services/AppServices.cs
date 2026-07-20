@@ -46,7 +46,11 @@ public sealed class StateStore
             {
                 if (string.IsNullOrWhiteSpace(game.SourceKind) || game.SourceKind == SourceKinds.Unknown) game.SourceKind = SourceKinds.Detect(game.SourcePath);
                 foreach (var version in game.Versions)
+                {
                     if (string.IsNullOrWhiteSpace(version.SourceKind) || version.SourceKind == SourceKinds.Unknown) version.SourceKind = SourceKinds.Detect(version.SourcePath);
+                    if (version.Id == game.CurrentVersionId && string.IsNullOrWhiteSpace(version.ExecutableRelativePath) && !string.IsNullOrWhiteSpace(game.ExecutableRelativePath))
+                        version.ExecutableRelativePath = game.ExecutableRelativePath;
+                }
                 foreach (var rule in state.SaveFileRules.Where(item => item.GameId == game.Id && item.SourceKind == "游戏目录"))
                 {
                     if (string.IsNullOrWhiteSpace(rule.SourceRootPath)) rule.SourceRootPath = game.PlayableRootPath ?? string.Empty;

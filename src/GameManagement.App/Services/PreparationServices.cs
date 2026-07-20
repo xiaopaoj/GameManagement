@@ -433,6 +433,33 @@ public static class ExecutableDiscoveryService
 
     public static bool IsExcludedExecutable(string path) => ExcludedNames.Contains(Path.GetFileName(path));
 
+    public static GameLaunchSelection? ResolveRecordedSelection(string searchRoot, string? executableRelativePath, string? preferredGameRoot = null)
+    {
+        if (string.IsNullOrWhiteSpace(executableRelativePath) || Path.IsPathFullyQualified(executableRelativePath)) return null;
+        var normalizedRelativePath = executableRelativePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        if (normalizedRelativePath.Split(Path.DirectorySeparatorChar).Any(part => part is ".." or ".")) return null;
+
+        var directories = new List<string>();
+        if (!string.IsNullOrWhiteSpace(preferredGameRoot) && Directory.Exists(preferredGameRoot)) directories.Add(Path.GetFullPath(preferredGameRoot));
+        if (Directory.Exists(searchRoot))
+        {
+            directories.Add(Path.GetFullPath(searchRoot));
+            try { directories.AddRange(Directory.EnumerateDirectories(searchRoot, "*", SearchOption.AllDirectories).OrderBy(path => path, StringComparer.CurrentCultureIgnoreCase)); }
+            catch (UnauthorizedAccessException) { }
+            catch (IOException) { }
+        }
+
+        foreach (var gameRoot in directories.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var root = Path.GetFullPath(gameRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var candidate = Path.GetFullPath(Path.Combine(root, normalizedRelativePath));
+            if (!candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(candidate)) continue;
+            var valid = Path.GetExtension(candidate).Equals(".exe", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(candidate).Equals("index.html", StringComparison.OrdinalIgnoreCase);
+            if (valid) return new GameLaunchSelection(root, candidate);
+        }
+        return null;
+    }
+
     private static IEnumerable<string> EnumerateIndexFiles(string directory)
     {
         try

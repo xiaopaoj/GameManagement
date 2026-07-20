@@ -298,6 +298,18 @@ public sealed class MainViewModel : ObservableObject
         if (SelectedGame.Status == "运行中") { ShowError("该游戏的主程序已经在运行。 "); return; }
         var game = SelectedGame;
         var owner = Application.Current.MainWindow;
+        if (!game.HasSystemSave)
+        {
+            try
+            {
+                SystemSaveMonitoringService.CancelLatestSession(_state, game, "已跳过");
+                _store.Save(_state);
+                StatusMessage = "该游戏已标记为不存在系统存档，本次跳过系统目录扫描";
+                GameProcessMonitorService.Launch(game, OnGameStateChanged);
+            }
+            catch (Exception ex) { _store.Save(_state); ShowError(ex.Message); }
+            return;
+        }
         var progressWindow = new PreparationProgressWindow("正在建立系统存档监控快照") { Owner = owner };
         using var cancellation = new CancellationTokenSource();
         progressWindow.EnableCancellation(cancellation.Cancel);

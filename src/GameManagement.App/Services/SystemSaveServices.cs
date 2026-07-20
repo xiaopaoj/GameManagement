@@ -28,6 +28,7 @@ public static class SystemSaveMonitoringService
 
     public static async Task<SystemMonitorSessionItem?> BeginSessionAsync(AppState state, GameItem game, IProgress<SystemMonitorProgress>? progress = null, CancellationToken token = default)
     {
+        if (!game.HasSystemSave) return null;
         var isInitial = !game.SystemSaveInitialScanCompleted;
         var directories = isInitial
             ? GetCommonDirectories().ToList()
@@ -55,6 +56,11 @@ public static class SystemSaveMonitoringService
 
     public static async Task<List<SaveCandidateItem>> CompleteSessionAsync(AppState state, GameItem game, string snapshotKind, IProgress<SystemMonitorProgress>? progress = null, CancellationToken token = default)
     {
+        if (!game.HasSystemSave)
+        {
+            CancelLatestSession(state, game, "已跳过");
+            return [];
+        }
         var session = state.SystemMonitorSessions.Where(item => item.GameId == game.Id && item.Status == "监控中").OrderByDescending(item => item.StartedAt).FirstOrDefault();
         if (session is null || !File.Exists(session.SnapshotFilePath)) return [];
         var before = await ReadSnapshotAsync(session.SnapshotFilePath, token);

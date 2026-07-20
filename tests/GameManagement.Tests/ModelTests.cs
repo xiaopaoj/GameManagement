@@ -496,6 +496,27 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 再次准备应按版本记录的相对路径恢复启动文件()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var gameRoot = Path.Combine(root, "解压目录", "游戏本体");
+        var executable = Path.Combine(gameRoot, "bin", "Game.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
+        try
+        {
+            File.WriteAllText(executable, "test");
+
+            var result = ExecutableDiscoveryService.ResolveRecordedSelection(root, Path.Combine("bin", "Game.exe"));
+
+            Assert.NotNull(result);
+            Assert.Equal(gameRoot, result!.GameRoot, ignoreCase: true);
+            Assert.Equal(executable, result.LaunchFile, ignoreCase: true);
+            Assert.Null(ExecutableDiscoveryService.ResolveRecordedSelection(root, Path.Combine("bin", "missing.exe")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void 游戏运行状态应记录启动退出和持续时间()
     {
         var game = new GameItem { PlayableRootPath = Path.GetTempPath(), Status = "可游玩" };
@@ -933,14 +954,14 @@ public sealed class ModelTests
     }
 
     [Fact]
-    public async Task 普通归档应要求当前存档校验和匹配的外部备份()
+    public async Task 普通归档应校验当前存档但不要求外部备份()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         var diskRoot = Path.Combine(root, "disk");
         var playable = Path.Combine(diskRoot, "Games", "game");
         Directory.CreateDirectory(playable);
         var disk = new GameDiskItem { RootPath = diskRoot };
-        var game = new GameItem { DisplayName = "归档检查", PlayableRootPath = playable, CurrentGameDiskId = disk.Id, CurrentSaveGameDiskId = disk.Id, CurrentVersionId = Guid.NewGuid(), SystemSaveInitialScanCompleted = true, Status = "可游玩" };
+        var game = new GameItem { DisplayName = "归档检查", PlayableRootPath = playable, CurrentGameDiskId = disk.Id, CurrentSaveGameDiskId = disk.Id, CurrentVersionId = Guid.NewGuid(), HasSystemSave = false, SystemSaveInitialScanCompleted = false, Status = "可游玩" };
         var state = new AppState { Games = [game], GameDisks = [disk] };
         try
         {
@@ -958,20 +979,26 @@ public sealed class ModelTests
             };
             Directory.CreateDirectory(saveRoot);
             await File.WriteAllTextAsync(Path.Combine(saveRoot, "manifest.json"), JsonSerializer.Serialize(manifest));
-
-            var missingBackup = await OrdinaryArchiveService.CheckReadinessAsync(state, game);
-            Assert.False(missingBackup.Ready);
-            Assert.Contains(missingBackup.Problems, item => item.Contains("外部 ZIP 备份"));
-
-            var backupPath = Path.Combine(root, "backup.zip");
-            await File.WriteAllTextAsync(backupPath, "测试备份");
-            state.ExternalBackups.Add(new ExternalBackupItem { GameId = game.Id, GameVersionId = game.CurrentVersionId, FilePath = backupPath, ContentFingerprint = manifest.ContentFingerprint, Verified = true, VerifiedAt = DateTime.Now });
+            state.SaveCandidates.Add(new SaveCandidateItem { GameId = game.Id, SourceKind = "系统目录", Decision = SaveCandidateDecisions.Pending });
 
             var ready = await OrdinaryArchiveService.CheckReadinessAsync(state, game);
             Assert.True(ready.Ready);
             Assert.Equal(manifest.SnapshotId, ready.Manifest!.SnapshotId);
+            Assert.Null(ready.Backup);
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 标记无系统存档后应跳过系统目录扫描和首次扫描归档条件()
+    {
+        var game = new GameItem { HasSystemSave = false, SystemSaveInitialScanCompleted = false };
+        var state = new AppState();
+
+        var session = await SystemSaveMonitoringService.BeginSessionAsync(state, game);
+
+        Assert.Null(session);
+        Assert.Empty(state.SystemMonitorSessions);
     }
 
     [Fact]

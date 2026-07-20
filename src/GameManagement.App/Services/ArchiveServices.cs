@@ -50,9 +50,9 @@ public static class OrdinaryArchiveService
         var problems = new List<string>();
         if (game.Status == "运行中" || game.RunningProcessId.HasValue) problems.Add("主游戏程序仍在运行。");
         if (string.IsNullOrWhiteSpace(game.PlayableRootPath) || !Directory.Exists(game.PlayableRootPath)) problems.Add("可游玩目录不存在。");
-        if (!game.SystemSaveInitialScanCompleted) problems.Add("首次 Windows 常见存档目录扫描尚未人工确认完成。");
-        if (state.SystemMonitorSessions.Any(item => item.GameId == game.Id && item.Status == "监控中")) problems.Add("仍存在未完成的系统存档监控会话。");
-        if (state.SaveCandidates.Any(item => item.GameId == game.Id && item.Decision == SaveCandidateDecisions.Pending)) problems.Add("仍有待确认的存档变化。");
+        if (game.HasSystemSave && !game.SystemSaveInitialScanCompleted) problems.Add("首次 Windows 常见存档目录扫描尚未人工确认完成。");
+        if (game.HasSystemSave && state.SystemMonitorSessions.Any(item => item.GameId == game.Id && item.Status == "监控中")) problems.Add("仍存在未完成的系统存档监控会话。");
+        if (state.SaveCandidates.Any(item => item.GameId == game.Id && item.Decision == SaveCandidateDecisions.Pending && (game.HasSystemSave || item.SourceKind != "系统目录"))) problems.Add("仍有待确认的存档变化。");
 
         SaveSnapshotManifest? manifest = null;
         try
@@ -66,16 +66,7 @@ public static class OrdinaryArchiveService
             problems.Add($"读取当前存档清单失败：{ex.Message}");
         }
 
-        ExternalBackupItem? backup = null;
-        if (manifest is not null)
-        {
-            backup = state.ExternalBackups
-                .Where(item => item.GameId == game.Id && item.Verified && File.Exists(item.FilePath) && item.ContentFingerprint.Equals(manifest.ContentFingerprint, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(item => item.VerifiedAt ?? item.CreatedAt)
-                .FirstOrDefault();
-            if (backup is null) problems.Add("最新存档尚未生成并校验有效的外部 ZIP 备份。");
-        }
-        return new ArchiveReadinessResult(problems.Count == 0, problems, manifest, backup);
+        return new ArchiveReadinessResult(problems.Count == 0, problems, manifest, null);
     }
 
     public static void MarkArchived(GameItem game, SaveSnapshotManifest manifest)
@@ -86,7 +77,7 @@ public static class OrdinaryArchiveService
         game.ArchivedVersionId = game.CurrentVersionId;
         game.ArchivedSnapshotId = manifest.SnapshotId == Guid.Empty ? null : manifest.SnapshotId;
         game.ArchivedContentFingerprint = manifest.ContentFingerprint;
-        game.ArchiveMessage = "本地存档、清单及外部 ZIP 备份均已校验完成。";
+        game.ArchiveMessage = "本地存档、清单及文件 Hash 均已校验完成；外部 ZIP 备份不作为归档前置条件。";
         game.DirectoryCleanupStatus = !string.IsNullOrWhiteSpace(game.PlayableRootPath) && Directory.Exists(game.PlayableRootPath) ? "等待清理" : "目录不存在";
     }
 
