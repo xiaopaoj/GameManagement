@@ -61,11 +61,12 @@ public partial class BackupScheduleWindow : Window
         {
             var result = await ExternalBackupService.CreateScheduledFullBackupAsync(_state, cancellation.Token);
             _save($"完整 GameSave 备份：{result.Status}"); RefreshFields();
-            MessageBox.Show(result.Message, "完整备份", MessageBoxButton.OK, result.WaitingForTarget ? MessageBoxImage.Warning : MessageBoxImage.Information);
+            WindowInteractionService.RestoreBeforeDialog(this, progress);
+            MessageBox.Show(this, result.Message, "完整备份", MessageBoxButton.OK, result.WaitingForTarget ? MessageBoxImage.Warning : MessageBoxImage.Information);
         }
-        catch (OperationCanceledException) { MessageBox.Show("完整备份已取消，临时 ZIP 已自动清理。", "已取消", MessageBoxButton.OK, MessageBoxImage.Information); }
-        catch (Exception ex) { _state.BackupSettings.LastStatus = "失败"; _state.BackupSettings.LastError = ex.Message; _save("完整 GameSave 备份失败"); ShowError(ex.Message); }
-        finally { IsEnabled = true; progress.CloseSafely(); }
+        catch (OperationCanceledException) { WindowInteractionService.RestoreBeforeDialog(this, progress); MessageBox.Show(this, "完整备份已取消，临时 ZIP 已自动清理。", "已取消", MessageBoxButton.OK, MessageBoxImage.Information); }
+        catch (Exception ex) { _state.BackupSettings.LastStatus = "失败"; _state.BackupSettings.LastError = ex.Message; _save("完整 GameSave 备份失败"); WindowInteractionService.RestoreBeforeDialog(this, progress); MessageBox.Show(this, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { WindowInteractionService.CompleteProgress(this, progress); }
     }
 
     private void ViewBackups_Click(object sender, RoutedEventArgs e) => new BackupManagementWindow(_state, _save) { Owner = this }.ShowDialog();

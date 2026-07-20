@@ -285,25 +285,18 @@ public partial class GameDetailWindow : Window
         }
         finally
         {
-            IsEnabled = true;
-            progress.CloseSafely();
-            _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, new Action(RestoreWindowActivation));
+            WindowInteractionService.CompleteProgress(this, progress);
         }
     }
 
     private void RestoreAfterProgressDialog(PreparationProgressWindow progress)
     {
-        if (progress.IsVisible) progress.Hide();
-        RestoreWindowActivation();
+        WindowInteractionService.RestoreBeforeDialog(this, progress);
     }
 
     private void RestoreWindowActivation()
     {
-        if (!IsVisible) return;
-        IsEnabled = true;
-        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
-        Activate();
-        Focus();
+        WindowInteractionService.Restore(this);
     }
 
     private async void Archive_Click(object sender, RoutedEventArgs e) => await ArchiveCurrentAsync(false);
@@ -396,7 +389,8 @@ public partial class GameDetailWindow : Window
             task.Status = "完成"; task.Progress = 100; task.Message = $"特殊归档完成，{_game.SpecialArchiveBaselineStatus}"; task.CompletedAt = DateTime.Now;
             if (Directory.Exists(workRoot)) Directory.Delete(workRoot, true);
             task.WorkingDirectory = string.Empty; _save(task.Message); RefreshBindings();
-            MessageBox.Show(task.Message, "特殊归档完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            WindowInteractionService.RestoreBeforeDialog(this, progress);
+            MessageBox.Show(this, task.Message, "特殊归档完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (OperationCanceledException ex)
         {
@@ -404,9 +398,9 @@ public partial class GameDetailWindow : Window
         }
         catch (Exception ex)
         {
-            task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; _save("特殊归档失败，临时目录已保留"); AppLogger.Error($"特殊归档失败：{_game.DisplayName}", ex); ShowError(ex.Message);
+            task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; _save("特殊归档失败，临时目录已保留"); AppLogger.Error($"特殊归档失败：{_game.DisplayName}", ex); WindowInteractionService.RestoreBeforeDialog(this, progress); MessageBox.Show(this, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
-        finally { IsEnabled = true; progress.CloseSafely(); RefreshBindings(); }
+        finally { WindowInteractionService.CompleteProgress(this, progress); RefreshBindings(); }
     }
     private async void ManualBackup_Click(object sender, RoutedEventArgs e)
     {
@@ -418,11 +412,12 @@ public partial class GameDetailWindow : Window
         {
             var result = await ExternalBackupService.CreateManualGameBackupAsync(_state, _game, cancellation.Token);
             _save(result.Message);
-            MessageBox.Show(result.Message, "手动备份完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            WindowInteractionService.RestoreBeforeDialog(this, progress);
+            MessageBox.Show(this, result.Message, "手动备份完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
-        catch (OperationCanceledException) { MessageBox.Show("手动备份已取消，临时 ZIP 已自动清理。", "已取消", MessageBoxButton.OK, MessageBoxImage.Information); }
-        catch (Exception ex) { AppLogger.Error($"手动备份失败：{_game.DisplayName}", ex); ShowError(ex.Message); }
-        finally { IsEnabled = true; progress.CloseSafely(); }
+        catch (OperationCanceledException) { WindowInteractionService.RestoreBeforeDialog(this, progress); MessageBox.Show(this, "手动备份已取消，临时 ZIP 已自动清理。", "已取消", MessageBoxButton.OK, MessageBoxImage.Information); }
+        catch (Exception ex) { AppLogger.Error($"手动备份失败：{_game.DisplayName}", ex); WindowInteractionService.RestoreBeforeDialog(this, progress); MessageBox.Show(this, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { WindowInteractionService.CompleteProgress(this, progress); }
     }
     private void SaveDirectories_Click(object sender, RoutedEventArgs e) => new SystemSaveDirectoryWindow(_game, _state, _save) { Owner = this }.ShowDialog();
     private void Snapshots_Click(object sender, RoutedEventArgs e) => new SaveManagementWindow(_state, _save, _game) { Owner = this }.ShowDialog();
@@ -526,7 +521,7 @@ public partial class GameDetailWindow : Window
             var progress = new Progress<SystemMonitorProgress>(value => progressWindow.UpdateStatus($"已扫描 {value.FileCount} 个系统目录文件：{value.CurrentPath}", 50));
             var session = await SystemSaveMonitoringService.BeginSessionAsync(_state, _game, progress, cancellation.Token);
             _save(session is null ? "未配置可用的系统存档目录，本次只监控游戏目录" : "游戏启动前的系统存档监控快照已建立");
-            progressWindow.CloseSafely(); IsEnabled = true;
+            WindowInteractionService.RestoreBeforeDialog(this, progressWindow);
             GameProcessMonitorService.Launch(_game, (game, message) =>
             {
                 _gameStateChanged(game, message);
@@ -535,8 +530,8 @@ public partial class GameDetailWindow : Window
             RefreshBindings();
         }
         catch (OperationCanceledException) { SystemSaveMonitoringService.CancelLatestSession(_state, _game, "已取消"); _save("游戏启动前的系统存档扫描已取消"); }
-        catch (Exception ex) { SystemSaveMonitoringService.CancelLatestSession(_state, _game, "启动失败"); _save("游戏启动失败，系统存档监控快照已取消"); MessageBox.Show(ex.Message, "启动失败", MessageBoxButton.OK, MessageBoxImage.Error); }
-        finally { IsEnabled = true; progressWindow.CloseSafely(); }
+        catch (Exception ex) { SystemSaveMonitoringService.CancelLatestSession(_state, _game, "启动失败"); _save("游戏启动失败，系统存档监控快照已取消"); WindowInteractionService.RestoreBeforeDialog(this, progressWindow); MessageBox.Show(this, ex.Message, "启动失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { WindowInteractionService.CompleteProgress(this, progressWindow); }
     }
 
     private void HasSystemSave_Changed(object sender, RoutedEventArgs e)

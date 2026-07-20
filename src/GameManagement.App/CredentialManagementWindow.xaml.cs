@@ -76,10 +76,11 @@ public partial class CredentialManagementWindow : Window
             var password = CredentialService.Decrypt(Selected.Credential.EncryptedPassword, Selected.Credential.GameVersionId);
             await ArchiveExtractionService.ValidatePasswordAsync(archivePath, password);
             Selected.Credential.VerifiedAt = DateTime.Now; Selected.Credential.UpdatedAt = DateTime.Now; _save("解压密码重新验证成功");
-            MessageBox.Show("密码验证成功。", "重新验证", MessageBoxButton.OK, MessageBoxImage.Information); RefreshItems(Selected.Credential.Id);
+            WindowInteractionService.RestoreBeforeDialog(this, progress);
+            MessageBox.Show(this, "密码验证成功。", "重新验证", MessageBoxButton.OK, MessageBoxImage.Information); RefreshItems(Selected.Credential.Id);
         }
-        catch (Exception ex) { AppLogger.Error("重新验证解压密码失败", ex); ShowError($"密码验证失败：{ex.Message}"); }
-        finally { IsEnabled = true; progress.CloseSafely(); }
+        catch (Exception ex) { AppLogger.Error("重新验证解压密码失败", ex); WindowInteractionService.RestoreBeforeDialog(this, progress); MessageBox.Show(this, $"密码验证失败：{ex.Message}", "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { WindowInteractionService.CompleteProgress(this, progress); }
     }
 
     private string? ResolveArchivePath(ArchiveCredentialItem credential)

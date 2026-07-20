@@ -201,8 +201,8 @@ public partial class VersionManagementWindow : Window
             return true;
         }
         catch (OperationCanceledException) { task.Status = "已取消"; task.Message = $"用户取消了{title}"; task.CompletedAt = DateTime.Now; _save(task.Message); return false; }
-        catch (Exception ex) { task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; _save($"{title}失败"); AppLogger.Error(title, ex); ShowError($"{title}失败：{ex.Message}"); return false; }
-        finally { IsEnabled = true; progressWindow.CloseSafely(); }
+        catch (Exception ex) { task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; _save($"{title}失败"); AppLogger.Error(title, ex); WindowInteractionService.RestoreBeforeDialog(this, progressWindow); MessageBox.Show(this, $"{title}失败：{ex.Message}", "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); return false; }
+        finally { WindowInteractionService.CompleteProgress(this, progressWindow); }
     }
 
     private (string Path, string Kind)? SelectSource(string title)

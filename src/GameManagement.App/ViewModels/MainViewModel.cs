@@ -241,8 +241,8 @@ public sealed class MainViewModel : ObservableObject
             Save(task.Message);
         }
         catch (OperationCanceledException) { task.Status = "已取消"; task.Message = "用户取消了来源指纹计算，未添加尚未完成的游戏。"; task.CompletedAt = DateTime.Now; StatusMessage = task.Message; }
-        catch (Exception ex) { task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; AppLogger.Error("添加游戏并记录来源指纹失败", ex); ShowError($"添加失败：{ex.Message}"); }
-        finally { _store.Save(_state); owner.IsEnabled = true; progressWindow.CloseSafely(); }
+        catch (Exception ex) { task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now; AppLogger.Error("添加游戏并记录来源指纹失败", ex); WindowInteractionService.RestoreBeforeDialog(owner, progressWindow); MessageBox.Show(owner, $"添加失败：{ex.Message}", "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { _store.Save(_state); WindowInteractionService.CompleteProgress(owner, progressWindow); }
     }
 
     public static string GetCandidateDisplayName(ScanCandidate candidate)
@@ -319,12 +319,12 @@ public sealed class MainViewModel : ObservableObject
             var progress = new Progress<SystemMonitorProgress>(value => progressWindow.UpdateStatus($"已扫描 {value.FileCount} 个系统目录文件：{value.CurrentPath}", 50));
             await SystemSaveMonitoringService.BeginSessionAsync(_state, game, progress, cancellation.Token);
             _store.Save(_state);
-            progressWindow.CloseSafely(); owner.IsEnabled = true;
+            WindowInteractionService.RestoreBeforeDialog(owner, progressWindow);
             GameProcessMonitorService.Launch(game, OnGameStateChanged);
         }
         catch (OperationCanceledException) { SystemSaveMonitoringService.CancelLatestSession(_state, game, "已取消"); _store.Save(_state); StatusMessage = "游戏启动前的系统存档扫描已取消"; }
-        catch (Exception ex) { SystemSaveMonitoringService.CancelLatestSession(_state, game, "启动失败"); _store.Save(_state); ShowError(ex.Message); }
-        finally { owner.IsEnabled = true; progressWindow.CloseSafely(); }
+        catch (Exception ex) { SystemSaveMonitoringService.CancelLatestSession(_state, game, "启动失败"); _store.Save(_state); WindowInteractionService.RestoreBeforeDialog(owner, progressWindow); MessageBox.Show(owner, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { WindowInteractionService.CompleteProgress(owner, progressWindow); }
     }
 
     private void OnGameStateChanged(GameItem game, string message)

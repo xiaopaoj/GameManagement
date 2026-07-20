@@ -44,10 +44,11 @@ public partial class BackupManagementWindow : Window
             backup.VerifiedAt = backup.Verified ? DateTime.Now : null;
             backup.Status = backup.Verified ? "已完成" : "校验失败";
             _save(backup.Verified ? "外部备份重新校验成功" : "外部备份重新校验失败");
-            MessageBox.Show(backup.Verified ? "ZIP 可读性和文件 Hash 校验成功。" : "ZIP 不可读、文件缺失或 Hash 不一致。", "重新校验", MessageBoxButton.OK, backup.Verified ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            WindowInteractionService.Restore(this);
+            MessageBox.Show(this, backup.Verified ? "ZIP 可读性和文件 Hash 校验成功。" : "ZIP 不可读、文件缺失或 Hash 不一致。", "重新校验", MessageBoxButton.OK, backup.Verified ? MessageBoxImage.Information : MessageBoxImage.Warning);
             RefreshList();
         }
-        finally { IsEnabled = true; }
+        finally { WindowInteractionService.Restore(this); }
     }
 
     private void OpenZip_Click(object sender, RoutedEventArgs e)

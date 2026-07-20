@@ -85,10 +85,11 @@ public partial class SaveManagementWindow : Window
             progress.UpdateStatus("扫描完成", 100);
             RefreshLists();
             var pendingCount = candidates.Count(item => item.Decision == SaveCandidateDecisions.Pending);
-            MessageBox.Show(candidates.Count == 0 ? "没有发现游戏目录变化。" : automaticResult?.ContentChanged == true ? $"已确认规则发生变化并自动创建{kind}快照；另有 {pendingCount} 个候选需要人工处理。" : $"发现 {pendingCount} 个待确认变化，请在候选列表中确认或排除。", "扫描完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            WindowInteractionService.RestoreBeforeDialog(this, progress);
+            MessageBox.Show(this, candidates.Count == 0 ? "没有发现游戏目录变化。" : automaticResult?.ContentChanged == true ? $"已确认规则发生变化并自动创建{kind}快照；另有 {pendingCount} 个候选需要人工处理。" : $"发现 {pendingCount} 个待确认变化，请在候选列表中确认或排除。", "扫描完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
-        catch (Exception ex) { AppLogger.Error("扫描存档变化失败", ex); ShowError(ex.Message); }
-        finally { IsEnabled = true; progress.CloseSafely(); }
+        catch (Exception ex) { AppLogger.Error("扫描存档变化失败", ex); WindowInteractionService.RestoreBeforeDialog(this, progress); MessageBox.Show(this, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { WindowInteractionService.CompleteProgress(this, progress); }
     }
 
     private async void ConfirmCandidates_Click(object sender, RoutedEventArgs e)
@@ -109,10 +110,11 @@ public partial class SaveManagementWindow : Window
             var result = await SaveSnapshotService.ApplyAndCreateAsync(_state, game, selected.Select(item => item.Id).ToList());
             _save(result.ContentChanged ? $"已创建{result.Snapshot?.SnapshotKind}存档快照" : "候选已确认，但本地存档内容没有变化，未创建快照");
             progress.UpdateStatus("存档处理完成", 100); RefreshLists();
-            MessageBox.Show(result.ContentChanged ? $"快照创建并校验完成：\n{result.Snapshot?.DirectoryPath}" : "候选已确认，但 current 内容没有变化，因此未生成重复快照。", "处理完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            WindowInteractionService.RestoreBeforeDialog(this, progress);
+            MessageBox.Show(this, result.ContentChanged ? $"快照创建并校验完成：\n{result.Snapshot?.DirectoryPath}" : "候选已确认，但 current 内容没有变化，因此未生成重复快照。", "处理完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
-        catch (Exception ex) { AppLogger.Error("创建本地存档快照失败", ex); ShowError(ex.Message); }
-        finally { IsEnabled = true; progress.CloseSafely(); }
+        catch (Exception ex) { AppLogger.Error("创建本地存档快照失败", ex); WindowInteractionService.RestoreBeforeDialog(this, progress); MessageBox.Show(this, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { WindowInteractionService.CompleteProgress(this, progress); }
     }
 
     private void ExcludeCandidates_Click(object sender, RoutedEventArgs e)

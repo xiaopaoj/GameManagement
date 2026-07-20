@@ -677,7 +677,28 @@ public sealed class ModelTests
 
         Assert.Contains("RestoreAfterProgressDialog(progress);", source);
         Assert.Contains("MessageBox.Show(this, \"游戏准备完成。\"", source);
-        Assert.Contains("Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle", source);
+        Assert.Contains("WindowInteractionService.CompleteProgress(this, progress);", source);
+    }
+
+    [Fact]
+    public void 创建快照和其他阻塞任务应在结果提示前恢复调用窗口()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var saveSource = File.ReadAllText(Path.Combine(appRoot, "SaveManagementWindow.xaml.cs"));
+
+        Assert.Contains("WindowInteractionService.RestoreBeforeDialog(this, progress);", saveSource);
+        Assert.Contains("MessageBox.Show(this, result.ContentChanged", saveSource);
+        Assert.Contains("finally { WindowInteractionService.CompleteProgress(this, progress); }", saveSource);
+
+        foreach (var fileName in new[] { "BackupScheduleWindow.xaml.cs", "CredentialManagementWindow.xaml.cs", "GameDetailWindow.xaml.cs" })
+        {
+            var source = File.ReadAllText(Path.Combine(appRoot, fileName));
+            Assert.Contains("WindowInteractionService.RestoreBeforeDialog(this, progress", source);
+            Assert.Contains("WindowInteractionService.CompleteProgress(this, progress", source);
+        }
     }
 
     [Fact]
