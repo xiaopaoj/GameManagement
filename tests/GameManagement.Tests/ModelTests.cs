@@ -372,6 +372,21 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 密码历史应加密保存去重并按最近使用排序()
+    {
+        var state = new AppState();
+
+        CredentialService.AddPasswordHistory(state, "密码一");
+        CredentialService.AddPasswordHistory(state, "密码二");
+        CredentialService.AddPasswordHistory(state, "密码一");
+        CredentialService.AddPasswordHistory(state, string.Empty);
+
+        Assert.Equal(2, state.PasswordHistory.Count);
+        Assert.DoesNotContain(state.PasswordHistory, item => item.EncryptedPassword is "密码一" or "密码二");
+        Assert.Equal(["密码一", "密码二"], CredentialService.GetPasswordHistory(state));
+    }
+
+    [Fact]
     public async Task ZIP文件应能够解压到目标目录()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

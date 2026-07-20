@@ -864,8 +864,11 @@ public partial class GameDetailWindow : Window
         progress.Hide(); IsEnabled = true;
         try
         {
-            var window = new PasswordInputWindow(title, Path.GetFileName(archivePath), existingPassword) { Owner = this };
-            return window.ShowDialog() == true ? window.Password : null;
+            var window = new PasswordInputWindow(title, Path.GetFileName(archivePath), existingPassword, CredentialService.GetPasswordHistory(_state)) { Owner = this };
+            if (window.ShowDialog() != true) return null;
+            CredentialService.AddPasswordHistory(_state, window.Password);
+            _save("解压密码历史已更新");
+            return window.Password;
         }
         finally { IsEnabled = false; progress.Show(); }
     }

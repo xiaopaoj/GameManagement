@@ -46,8 +46,9 @@ public partial class CredentialManagementWindow : Window
         string current;
         try { current = CredentialService.Decrypt(Selected.Credential.EncryptedPassword, Selected.Credential.GameVersionId); }
         catch (Exception ex) { ShowError($"密码解密失败：{ex.Message}"); return; }
-        var dialog = new PasswordInputWindow("修改解压密码", Selected.ArchiveName, current) { Owner = this };
+        var dialog = new PasswordInputWindow("修改解压密码", Selected.ArchiveName, current, CredentialService.GetPasswordHistory(_state)) { Owner = this };
         if (dialog.ShowDialog() != true) return;
+        CredentialService.AddPasswordHistory(_state, dialog.Password);
         CredentialService.SavePassword(_state, Selected.Credential.GameVersionId, Selected.Credential.ArchiveFingerprint, dialog.Password, Selected.Credential.StepOrder, Selected.Credential.ArchiveDisplayName, Selected.Credential.ArchiveRelativePath, null);
         _save("解压密码已修改，等待下次使用或手动重新验证"); RefreshItems(Selected.Credential.Id);
     }

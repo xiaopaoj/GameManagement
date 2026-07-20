@@ -10,6 +10,8 @@ namespace GameManagement.Services;
 
 public static class CredentialService
 {
+    private static readonly Guid PasswordHistoryEntropy = new("7ad75725-f7a0-4fa3-b39a-c82c62fb9383");
+
     public static string Encrypt(string password, Guid versionId)
     {
         if (string.IsNullOrEmpty(password)) return string.Empty;
@@ -48,6 +50,44 @@ public static class CredentialService
     }
 
     public static void DeletePassword(AppState state, Guid credentialId) => state.Credentials.RemoveAll(item => item.Id == credentialId);
+
+    public static IReadOnlyList<string> GetPasswordHistory(AppState state)
+    {
+        var passwords = new List<string>();
+        foreach (var item in state.PasswordHistory.OrderByDescending(item => item.LastUsedAt))
+        {
+            try
+            {
+                var password = Decrypt(item.EncryptedPassword, PasswordHistoryEntropy);
+                if (!string.IsNullOrEmpty(password) && !passwords.Contains(password, StringComparer.Ordinal)) passwords.Add(password);
+            }
+            catch (Exception ex) when (ex is System.Security.Cryptography.CryptographicException or FormatException)
+            {
+                // 无法由当前 Windows 用户解密的历史记录不显示，也不影响解压流程。
+            }
+        }
+        return passwords;
+    }
+
+    public static void AddPasswordHistory(AppState state, string password)
+    {
+        if (string.IsNullOrEmpty(password)) return;
+        var existing = state.PasswordHistory.FirstOrDefault(item =>
+        {
+            try { return Decrypt(item.EncryptedPassword, PasswordHistoryEntropy) == password; }
+            catch (Exception ex) when (ex is System.Security.Cryptography.CryptographicException or FormatException) { return false; }
+        });
+        if (existing is not null)
+        {
+            existing.LastUsedAt = DateTime.Now;
+            return;
+        }
+        state.PasswordHistory.Add(new PasswordHistoryItem
+        {
+            EncryptedPassword = Encrypt(password, PasswordHistoryEntropy),
+            LastUsedAt = DateTime.Now
+        });
+    }
 }
 
 public static class FileFingerprintService

@@ -12,6 +12,7 @@ public sealed class AppState
     public List<GameDiskItem> GameDisks { get; set; } = [];
     public List<GameItem> Games { get; set; } = [];
     public List<ArchiveCredentialItem> Credentials { get; set; } = [];
+    public List<PasswordHistoryItem> PasswordHistory { get; set; } = [];
     public List<FileBaselineItem> FileBaselines { get; set; } = [];
     public List<SaveFileRuleItem> SaveFileRules { get; set; } = [];
     public List<SaveFileExclusionItem> SaveFileExclusions { get; set; } = [];
@@ -126,6 +127,14 @@ public sealed class ArchiveCredentialItem
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public DateTime? VerifiedAt { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.Now;
+}
+
+public sealed class PasswordHistoryItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string EncryptedPassword { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime LastUsedAt { get; set; } = DateTime.Now;
 }
 
 public sealed class ArchiveVolumeGroup
