@@ -702,6 +702,22 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 历史解压确认应支持自动重放后续步骤且未勾选时继续确认()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var dialogXaml = File.ReadAllText(Path.Combine(appRoot, "HistoryReplayWindow.xaml"));
+        var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
+
+        Assert.Contains("后续解压步骤均自动使用历史选择和已保存密码", dialogXaml);
+        Assert.Contains("if (_autoReplayRemainingHistory) return true;", detailSource);
+        Assert.Contains("dialog.AutoReplayFollowingSteps", detailSource);
+        Assert.Contains("ConfirmHistoryReplay(stepName, recordedGroup.EntryPath, allowAutoReplayFollowingSteps)", detailSource);
+    }
+
+    [Fact]
     public void MP4前缀和ZIP尾部的混合文件应识别为ZIP()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

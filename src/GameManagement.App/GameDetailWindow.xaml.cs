@@ -14,6 +14,7 @@ public partial class GameDetailWindow : Window
     private readonly Action<string> _save;
     private readonly Action<GameItem, string> _gameStateChanged;
     private bool _versionSwitchInProgress;
+    private bool _autoReplayRemainingHistory;
 
     public GameDetailWindow(GameItem game, AppState state, Action<string> save, Action<GameItem, string> gameStateChanged)
     {
@@ -131,7 +132,8 @@ public partial class GameDetailWindow : Window
             var firstGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(copiedSource, cancellation.Token), cancellation.Token);
             if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有发现 ZIP、RAR、7z 或可识别的分卷组。");
             progress.Hide(); IsEnabled = true;
-            var firstGroup = SelectArchiveGroupWithHistory("选择第一次解压文件", "请选择第一次解压使用的 ZIP、RAR、7z 或分卷组：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压");
+            _autoReplayRemainingHistory = false;
+            var firstGroup = SelectArchiveGroupWithHistory("选择第一次解压文件", "请选择第一次解压使用的 ZIP、RAR、7z 或分卷组：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压", true);
             if (firstGroup is null) throw new OperationCanceledException("用户取消了第一次解压文件选择。", cancellation.Token);
             ConfirmMissingVolumes(firstGroup, "第一次解压");
             var firstArchive = firstGroup.EntryPath;
@@ -666,7 +668,8 @@ public partial class GameDetailWindow : Window
         var firstGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(copiedSource, token), token);
         if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有找到第一次解压使用的 ZIP、RAR、7z 或分卷组。");
         progress.Hide(); IsEnabled = true;
-        var firstGroup = SelectArchiveGroupWithHistory("特殊归档：第一次解压", "请选择用于构建干净基线的第一次压缩文件：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压");
+        _autoReplayRemainingHistory = false;
+        var firstGroup = SelectArchiveGroupWithHistory("特殊归档：第一次解压", "请选择用于构建干净基线的第一次压缩文件：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压", true);
         if (firstGroup is null) throw new OperationCanceledException("用户取消第一次解压选择。", token);
         ConfirmMissingVolumes(firstGroup, "第一次解压");
         IsEnabled = false; progress.Show();
@@ -736,11 +739,11 @@ public partial class GameDetailWindow : Window
         return window.ShowDialog() == true ? window.SelectedChoice : null;
     }
 
-    private ArchiveVolumeGroup? SelectArchiveGroupWithHistory(string title, string prompt, IReadOnlyList<ArchiveVolumeGroup> groups, string sourceRoot, string? recordedRelativePath, string stepName)
+    private ArchiveVolumeGroup? SelectArchiveGroupWithHistory(string title, string prompt, IReadOnlyList<ArchiveVolumeGroup> groups, string sourceRoot, string? recordedRelativePath, string stepName, bool allowAutoReplayFollowingSteps = false)
     {
         var recordedPath = ResolveRecordedArchive(sourceRoot, recordedRelativePath);
         var recordedGroup = recordedPath is null ? null : groups.FirstOrDefault(group => group.Files.Any(path => PathsEqual(path, recordedPath)) || PathsEqual(group.EntryPath, recordedPath));
-        if (recordedGroup is not null && ConfirmHistoryReplay(stepName, recordedGroup.EntryPath)) return recordedGroup;
+        if (recordedGroup is not null && ConfirmHistoryReplay(stepName, recordedGroup.EntryPath, allowAutoReplayFollowingSteps)) return recordedGroup;
 
         var choices = groups.Select(group => new ChoiceItem
         {
@@ -751,7 +754,14 @@ public partial class GameDetailWindow : Window
         return SelectChoice(title, prompt, choices)?.Value as ArchiveVolumeGroup;
     }
 
-    private bool ConfirmHistoryReplay(string stepName, string archivePath) => MessageBox.Show($"检测到上次成功使用的{stepName}文件：\n{archivePath}\n\n是否重放历史选择和已保存密码？", "历史解压流程", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+    private bool ConfirmHistoryReplay(string stepName, string archivePath, bool allowAutoReplayFollowingSteps = false)
+    {
+        if (_autoReplayRemainingHistory) return true;
+        var dialog = new HistoryReplayWindow(stepName, archivePath, allowAutoReplayFollowingSteps) { Owner = this };
+        var useHistory = dialog.ShowDialog() == true && dialog.UseHistory;
+        if (useHistory && allowAutoReplayFollowingSteps && dialog.AutoReplayFollowingSteps) _autoReplayRemainingHistory = true;
+        return useHistory;
+    }
 
     private void ConfirmMissingVolumes(ArchiveVolumeGroup group, string stepName)
     {
