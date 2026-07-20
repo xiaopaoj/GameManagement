@@ -247,7 +247,11 @@ public sealed class MainViewModel : ObservableObject
 
     public static string GetCandidateDisplayName(ScanCandidate candidate)
     {
-        if (candidate.Kind == SourceKinds.ArchiveFile) return Path.GetFileNameWithoutExtension(candidate.Name);
+        if (candidate.Kind == SourceKinds.ArchiveFile)
+        {
+            var sevenZipPart = System.Text.RegularExpressions.Regex.Match(candidate.Name, @"^(?<name>.+)\.7z\.\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return sevenZipPart.Success ? sevenZipPart.Groups["name"].Value : Path.GetFileNameWithoutExtension(candidate.Name);
+        }
         return candidate.Name;
     }
 

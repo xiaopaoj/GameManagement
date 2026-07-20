@@ -153,7 +153,9 @@ public sealed class FileScanner
     {
         var extension = Path.GetExtension(path);
         return extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) ||
-               extension.Equals(".rar", StringComparison.OrdinalIgnoreCase);
+               extension.Equals(".rar", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".7z", StringComparison.OrdinalIgnoreCase) ||
+               Regex.IsMatch(Path.GetFileName(path), @"^.+\.7z\.\d+$", RegexOptions.IgnoreCase);
     }
     private static string Normalize(string value) => Path.GetFullPath(value).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 }
@@ -186,6 +188,8 @@ public static class ArchiveDiscoveryService
         var extension = Path.GetExtension(path);
         if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase)) return "ZIP";
         if (extension.Equals(".rar", StringComparison.OrdinalIgnoreCase)) return "RAR";
+        if (extension.Equals(".7z", StringComparison.OrdinalIgnoreCase)) return "7Z";
+        if (Regex.IsMatch(Path.GetFileName(path), @"^.+\.7z\.\d+$", RegexOptions.IgnoreCase)) return "7Z";
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -194,6 +198,7 @@ public static class ArchiveDiscoveryService
             stream.ReadExactly(head);
             if (ContainsZipSignature(head)) return "ZIP";
             if (ContainsRarSignature(head)) return "RAR";
+            if (ContainsSevenZipSignature(head)) return "7Z";
 
             if (stream.Length > headLength)
             {
@@ -203,6 +208,7 @@ public static class ArchiveDiscoveryService
                 stream.ReadExactly(tail);
                 if (ContainsZipSignature(tail)) return "ZIP";
                 if (ContainsRarSignature(tail)) return "RAR";
+                if (ContainsSevenZipSignature(tail)) return "7Z";
             }
         }
         catch (IOException) { }
@@ -212,7 +218,7 @@ public static class ArchiveDiscoveryService
 
     public static string EnsureCorrectExtension(string path, string format)
     {
-        var expectedExtension = format.Equals("ZIP", StringComparison.OrdinalIgnoreCase) ? ".zip" : ".rar";
+        var expectedExtension = GetExtensionForFormat(format);
         if (Path.GetExtension(path).Equals(expectedExtension, StringComparison.OrdinalIgnoreCase)) return path;
         var target = Path.ChangeExtension(path, expectedExtension);
         if (File.Exists(target)) target = Path.Combine(Path.GetDirectoryName(path)!, $"{Path.GetFileNameWithoutExtension(path)}-{Guid.NewGuid():N}{expectedExtension}");
@@ -222,10 +228,13 @@ public static class ArchiveDiscoveryService
 
     public static async Task<string> CreateNormalizedWorkingArchiveAsync(string path, string format, CancellationToken token = default)
     {
-        var expectedExtension = format.Equals("ZIP", StringComparison.OrdinalIgnoreCase) ? ".zip" : ".rar";
-        var signature = format.Equals("ZIP", StringComparison.OrdinalIgnoreCase)
-            ? new byte[] { 0x50, 0x4B, 0x03, 0x04 }
-            : new byte[] { 0x52, 0x61, 0x72, 0x21, 0x1A, 0x07 };
+        var expectedExtension = GetExtensionForFormat(format);
+        var signature = format.ToUpperInvariant() switch
+        {
+            "ZIP" => new byte[] { 0x50, 0x4B, 0x03, 0x04 },
+            "7Z" => new byte[] { 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C },
+            _ => new byte[] { 0x52, 0x61, 0x72, 0x21, 0x1A, 0x07 }
+        };
         var offset = await FindSignatureOffsetAsync(path, signature, token);
         if (offset <= 0) return EnsureCorrectExtension(path, format);
 
@@ -291,6 +300,16 @@ public static class ArchiveDiscoveryService
         return data.IndexOf(new byte[] { 0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00 }) >= 0 ||
                data.IndexOf(new byte[] { 0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00 }) >= 0;
     }
+
+    private static bool ContainsSevenZipSignature(ReadOnlySpan<byte> data) =>
+        data.IndexOf(new byte[] { 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C }) >= 0;
+
+    private static string GetExtensionForFormat(string format) => format.ToUpperInvariant() switch
+    {
+        "ZIP" => ".zip",
+        "7Z" => ".7z",
+        _ => ".rar"
+    };
 }
 
 public static partial class ArchiveVolumeService
@@ -315,10 +334,13 @@ public static partial class ArchiveVolumeService
         var fileName = Path.GetFileName(fullPath);
 
         var partMatch = PartRarRegex().Match(fileName);
-        if (partMatch.Success) return BuildNumberedGroup(directory, partMatch.Groups["base"].Value, "part-rar", ".part", ".rar", 1, true);
+        if (partMatch.Success) return BuildNumberedGroup(directory, partMatch.Groups["base"].Value, "part-rar", ".part", ".rar", 1, PartRarRegex(), "RAR");
 
         var zipPartMatch = ZipPartRegex().Match(fileName);
-        if (zipPartMatch.Success) return BuildNumberedGroup(directory, zipPartMatch.Groups["base"].Value, "zip-parts", ".zip.", string.Empty, 1, false);
+        if (zipPartMatch.Success) return BuildNumberedGroup(directory, zipPartMatch.Groups["base"].Value, "zip-parts", ".zip.", string.Empty, 1, ZipPartRegex(), "ZIP");
+
+        var sevenZipPartMatch = SevenZipPartRegex().Match(fileName);
+        if (sevenZipPartMatch.Success) return BuildNumberedGroup(directory, sevenZipPartMatch.Groups["base"].Value, "7z-parts", ".7z.", string.Empty, 1, SevenZipPartRegex(), "7Z");
 
         var oldRarMatch = OldRarRegex().Match(fileName);
         if (oldRarMatch.Success) return BuildOldRarGroup(directory, oldRarMatch.Groups["base"].Value);
@@ -334,7 +356,7 @@ public static partial class ArchiveVolumeService
         if (Path.GetExtension(fileName).Equals(".zip", StringComparison.OrdinalIgnoreCase))
         {
             var baseName = Path.GetFileNameWithoutExtension(fileName);
-            if (Directory.EnumerateFiles(directory, fileName + ".*").Any(path => ZipPartRegex().IsMatch(Path.GetFileName(path)))) return BuildNumberedGroup(directory, baseName, "zip-parts", ".zip.", string.Empty, 1, false);
+            if (Directory.EnumerateFiles(directory, fileName + ".*").Any(path => ZipPartRegex().IsMatch(Path.GetFileName(path)))) return BuildNumberedGroup(directory, baseName, "zip-parts", ".zip.", string.Empty, 1, ZipPartRegex(), "ZIP");
             if (Directory.EnumerateFiles(directory, $"{baseName}.z*").Any(path => OldZipRegex().IsMatch(Path.GetFileName(path)))) return BuildOldZipGroup(directory, baseName);
         }
 
@@ -348,10 +370,10 @@ public static partial class ArchiveVolumeService
         };
     }
 
-    private static ArchiveVolumeGroup BuildNumberedGroup(string directory, string baseName, string kind, string middle, string suffix, int expectedStart, bool rar)
+    private static ArchiveVolumeGroup BuildNumberedGroup(string directory, string baseName, string kind, string middle, string suffix, int expectedStart, Regex regex, string format)
     {
         var matches = Directory.EnumerateFiles(directory)
-            .Select(path => (Path: path, Match: rar ? PartRarRegex().Match(Path.GetFileName(path)) : ZipPartRegex().Match(Path.GetFileName(path))))
+            .Select(path => (Path: path, Match: regex.Match(Path.GetFileName(path))))
             .Where(item => item.Match.Success && item.Match.Groups["base"].Value.Equals(baseName, StringComparison.OrdinalIgnoreCase))
             .Select(item => (item.Path, Number: int.Parse(item.Match.Groups["number"].Value), Width: item.Match.Groups["number"].Value.Length))
             .OrderBy(item => item.Number).ToList();
@@ -361,7 +383,7 @@ public static partial class ArchiveVolumeService
         var missing = Enumerable.Range(expectedStart, max - expectedStart + 1).Where(number => !existing.Contains(number))
             .Select(number => Path.Combine(directory, $"{baseName}{middle}{number.ToString($"D{width}")}{suffix}")).ToList();
         var entry = matches.FirstOrDefault(item => item.Number == expectedStart).Path ?? matches.FirstOrDefault().Path ?? Path.Combine(directory, $"{baseName}{middle}{expectedStart.ToString($"D{width}")}{suffix}");
-        return new ArchiveVolumeGroup { GroupKey = Path.Combine(directory, $"{kind}:{baseName}"), VolumeKind = kind, EntryPath = entry, Format = rar ? "RAR" : "ZIP", Files = matches.Select(item => Path.GetFullPath(item.Path)).ToList(), MissingFiles = missing };
+        return new ArchiveVolumeGroup { GroupKey = Path.Combine(directory, $"{kind}:{baseName}"), VolumeKind = kind, EntryPath = entry, Format = format, Files = matches.Select(item => Path.GetFullPath(item.Path)).ToList(), MissingFiles = missing };
     }
 
     private static ArchiveVolumeGroup BuildOldRarGroup(string directory, string baseName)
@@ -400,6 +422,7 @@ public static partial class ArchiveVolumeService
 
     [GeneratedRegex(@"^(?<base>.+)\.part(?<number>\d+)\.rar$", RegexOptions.IgnoreCase)] private static partial Regex PartRarRegex();
     [GeneratedRegex(@"^(?<base>.+)\.zip\.(?<number>\d+)$", RegexOptions.IgnoreCase)] private static partial Regex ZipPartRegex();
+    [GeneratedRegex(@"^(?<base>.+)\.7z\.(?<number>\d+)$", RegexOptions.IgnoreCase)] private static partial Regex SevenZipPartRegex();
     [GeneratedRegex(@"^(?<base>.+)\.r(?<number>\d{2,3})$", RegexOptions.IgnoreCase)] private static partial Regex OldRarRegex();
     [GeneratedRegex(@"^(?<base>.+)\.z(?<number>\d{2,3})$", RegexOptions.IgnoreCase)] private static partial Regex OldZipRegex();
 }

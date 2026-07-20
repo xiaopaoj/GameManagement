@@ -287,29 +287,70 @@ public static class ArchiveExtractionService
 {
     public static Task ExtractAsync(string archivePath, string outputDirectory, string password, CancellationToken token = default) => Task.Run(() =>
     {
-        Directory.CreateDirectory(outputDirectory);
-        var outputRoot = Path.GetFullPath(outputDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        using var archive = ArchiveFactory.Open(archivePath, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password });
-        foreach (var entry in archive.Entries.Where(entry => !entry.IsDirectory))
+        var readableArchivePath = PrepareReadableArchive(archivePath, token, out var temporaryArchivePath);
+        try
         {
-            token.ThrowIfCancellationRequested();
-            var entryKey = entry.Key ?? throw new InvalidDataException("压缩包中存在无效文件名。");
-            var destination = Path.GetFullPath(Path.Combine(outputDirectory, entryKey));
-            if (!destination.StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException($"压缩包包含越界路径：{entryKey}");
-            entry.WriteToDirectory(outputDirectory, new ExtractionOptions { ExtractFullPath = true, Overwrite = true });
+            Directory.CreateDirectory(outputDirectory);
+            var outputRoot = Path.GetFullPath(outputDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            using var archive = ArchiveFactory.Open(readableArchivePath, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password });
+            foreach (var entry in archive.Entries.Where(entry => !entry.IsDirectory))
+            {
+                token.ThrowIfCancellationRequested();
+                var entryKey = entry.Key ?? throw new InvalidDataException("压缩包中存在无效文件名。");
+                var destination = Path.GetFullPath(Path.Combine(outputDirectory, entryKey));
+                if (!destination.StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException($"压缩包包含越界路径：{entryKey}");
+                entry.WriteToDirectory(outputDirectory, new ExtractionOptions { ExtractFullPath = true, Overwrite = true });
+            }
         }
+        finally { DeleteTemporaryArchive(temporaryArchivePath); }
     }, token);
 
     public static Task ValidatePasswordAsync(string archivePath, string password, CancellationToken token = default) => Task.Run(() =>
     {
-        token.ThrowIfCancellationRequested();
-        using var archive = ArchiveFactory.Open(archivePath, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password });
-        var entry = archive.Entries.FirstOrDefault(item => !item.IsDirectory);
-        if (entry is null) return;
-        using var stream = entry.OpenEntryStream();
-        Span<byte> buffer = stackalloc byte[1];
-        _ = stream.Read(buffer);
+        var readableArchivePath = PrepareReadableArchive(archivePath, token, out var temporaryArchivePath);
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            using var archive = ArchiveFactory.Open(readableArchivePath, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password });
+            var entry = archive.Entries.FirstOrDefault(item => !item.IsDirectory);
+            if (entry is null) return;
+            using var stream = entry.OpenEntryStream();
+            Span<byte> buffer = stackalloc byte[1];
+            _ = stream.Read(buffer);
+        }
+        finally { DeleteTemporaryArchive(temporaryArchivePath); }
     }, token);
+
+    private static string PrepareReadableArchive(string archivePath, CancellationToken token, out string? temporaryArchivePath)
+    {
+        temporaryArchivePath = null;
+        var group = ArchiveVolumeService.BuildGroup(archivePath);
+        if (!group.VolumeKind.Equals("7z-parts", StringComparison.OrdinalIgnoreCase)) return archivePath;
+        temporaryArchivePath = Path.Combine(Path.GetDirectoryName(archivePath)!, $".combined-{Guid.NewGuid():N}.7z");
+        try
+        {
+            using var output = new FileStream(temporaryArchivePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1024 * 1024);
+            foreach (var volume in group.Files)
+            {
+                token.ThrowIfCancellationRequested();
+                using var input = new FileStream(volume, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024);
+                input.CopyTo(output, 1024 * 1024);
+            }
+            return temporaryArchivePath;
+        }
+        catch
+        {
+            DeleteTemporaryArchive(temporaryArchivePath);
+            throw;
+        }
+    }
+
+    private static void DeleteTemporaryArchive(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
+        try { File.Delete(path); }
+        catch (Exception ex) { AppLogger.Error($"清理 7z 分卷临时合并文件失败：{path}", ex); }
+    }
 }
 
 public static class ExecutableDiscoveryService

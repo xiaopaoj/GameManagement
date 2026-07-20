@@ -208,23 +208,23 @@ public partial class VersionManagementWindow : Window
     private (string Path, string Kind)? SelectSource(string title)
     {
         var choiceWindow = new ChoiceWindow(title, "请选择原始来源形式：", [
-            new ChoiceItem { Name = "ZIP/RAR 文件", Description = "选择单个 ZIP 或 RAR 原始压缩文件", Value = SourceKinds.ArchiveFile },
-            new ChoiceItem { Name = "压缩文件目录", Description = "选择内部包含 ZIP/RAR 的游戏原始目录", Value = SourceKinds.ArchiveDirectory }
+            new ChoiceItem { Name = "ZIP/RAR/7z 文件", Description = "选择单个 ZIP、RAR、7z 或 7z 分卷原始文件", Value = SourceKinds.ArchiveFile },
+            new ChoiceItem { Name = "压缩文件目录", Description = "选择内部包含 ZIP、RAR、7z 或 7z 分卷的游戏原始目录", Value = SourceKinds.ArchiveDirectory }
         ]) { Owner = this };
         if (choiceWindow.ShowDialog() != true || choiceWindow.SelectedChoice?.Value is not string kind) return null;
 
         string? path;
         if (kind == SourceKinds.ArchiveFile)
         {
-            var dialog = new OpenFileDialog { Title = title, Filter = "ZIP/RAR 压缩文件|*.zip;*.rar|所有文件|*.*", CheckFileExists = true, Multiselect = false };
+            var dialog = new OpenFileDialog { Title = title, Filter = "ZIP/RAR/7z 压缩文件|*.zip;*.rar;*.7z;*.7z.*|所有文件|*.*", CheckFileExists = true, Multiselect = false };
             path = dialog.ShowDialog(this) == true ? dialog.FileName : null;
-            if (path is not null && ArchiveDiscoveryService.DetectFormat(path) is null) { ShowError("所选文件不是可识别的 ZIP 或 RAR 文件。"); return null; }
+            if (path is not null && ArchiveDiscoveryService.DetectFormat(path) is null) { ShowError("所选文件不是可识别的 ZIP、RAR、7z 或 7z 分卷文件。"); return null; }
         }
         else
         {
             var dialog = new OpenFolderDialog { Title = title, Multiselect = false };
             path = dialog.ShowDialog(this) == true ? dialog.FolderName : null;
-            if (path is not null && ArchiveDiscoveryService.Discover(path).Count == 0) { ShowError("所选目录中没有发现 ZIP、RAR 或可识别的混淆压缩文件。"); return null; }
+            if (path is not null && ArchiveDiscoveryService.Discover(path).Count == 0) { ShowError("所选目录中没有发现 ZIP、RAR、7z、7z 分卷或可识别的混淆压缩文件。"); return null; }
         }
         return path is null ? null : (Path.GetFullPath(path), kind);
     }

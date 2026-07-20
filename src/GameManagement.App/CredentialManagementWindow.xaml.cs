@@ -104,7 +104,8 @@ public partial class CredentialManagementWindow : Window
             if (File.Exists(path)) return path;
             if (credential.StepOrder == 2 && version.SecondArchiveUsedFallback && !string.IsNullOrWhiteSpace(version.SecondArchiveFormat))
             {
-                var renamed = Path.ChangeExtension(path, version.SecondArchiveFormat.Equals("ZIP", StringComparison.OrdinalIgnoreCase) ? ".zip" : ".rar");
+                var extension = version.SecondArchiveFormat.ToUpperInvariant() switch { "ZIP" => ".zip", "7Z" => ".7z", _ => ".rar" };
+                var renamed = Path.ChangeExtension(path, extension);
                 if (File.Exists(renamed)) return renamed;
             }
         }

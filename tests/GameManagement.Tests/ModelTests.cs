@@ -32,6 +32,7 @@ public sealed class ModelTests
     [Theory]
     [InlineData("示例游戏.zip", SourceKinds.ArchiveFile, "示例游戏")]
     [InlineData("示例游戏.rar", SourceKinds.ArchiveFile, "示例游戏")]
+    [InlineData("bhfuztp2.7z.001", SourceKinds.ArchiveFile, "bhfuztp2")]
     [InlineData("示例游戏目录", SourceKinds.ArchiveDirectory, "示例游戏目录")]
     public void 批量添加时应自动生成游戏名称(string name, string kind, string expected)
     {
@@ -68,17 +69,17 @@ public sealed class ModelTests
         {
             File.WriteAllBytes(Path.Combine(root, "a.zip"), []);
             File.WriteAllBytes(Path.Combine(nested, "b.rar"), []);
-            File.WriteAllBytes(Path.Combine(nested, "ignore.7z"), []);
+            File.WriteAllBytes(Path.Combine(nested, "game.7z"), []);
 
             var result = ArchiveDiscoveryService.Discover(root);
 
-            Assert.Equal(2, result.Count);
+            Assert.Equal(3, result.Count);
         }
         finally { Directory.Delete(root, true); }
     }
 
     [Fact]
-    public async Task 游戏库扫描应只枚举直属目录和ZIPRAR文件()
+    public async Task 游戏库扫描应只枚举直属目录和支持的压缩文件()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         var gameDirectory = Path.Combine(root, "目录游戏");
@@ -87,7 +88,9 @@ public sealed class ModelTests
         try
         {
             var directZip = Path.Combine(root, "直接游戏.zip");
+            var directSevenZipPart = Path.Combine(root, "bhfuztp2.7z.001");
             File.WriteAllBytes(directZip, []);
+            File.WriteAllBytes(directSevenZipPart, [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]);
             File.WriteAllBytes(Path.Combine(nested, "内部游戏.rar"), []);
             File.WriteAllBytes(Path.Combine(root, "伪装压缩包.bin"), [0x50, 0x4B, 0x03, 0x04]);
             var reports = new List<ScanProgressInfo>();
@@ -99,9 +102,10 @@ public sealed class ModelTests
                 new ImmediateProgress<ScanProgressInfo>(reports.Add),
                 CancellationToken.None);
 
-            Assert.Equal(2, result.Count);
+            Assert.Equal(3, result.Count);
             Assert.Contains(result, item => item.FullPath == gameDirectory && item.ArchiveCount == -1);
             Assert.Contains(result, item => item.FullPath == directZip && item.ArchiveCount == 1);
+            Assert.Contains(result, item => item.FullPath == directSevenZipPart && item.ArchiveCount == 1);
             Assert.DoesNotContain(result, item => item.Name == "内部游戏.rar" || item.Name == "伪装压缩包.bin");
             Assert.Equal(100, reports[^1].Percentage);
             Assert.True(reports[^1].IsCompleted);
@@ -299,6 +303,28 @@ public sealed class ModelTests
 
             Assert.Single(group.MissingFiles);
             Assert.EndsWith("game.zip.001", group.MissingFiles[0], StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 分卷7Z应聚合并要求从001开始连续存在()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var part2 = Path.Combine(root, "bhfuztp2.7z.002");
+            File.WriteAllBytes(part2, []);
+            File.WriteAllBytes(Path.Combine(root, "bhfuztp2.7z.003"), []);
+
+            var group = ArchiveVolumeService.BuildGroup(part2);
+
+            Assert.Equal("7Z", group.Format);
+            Assert.Equal("7z-parts", group.VolumeKind);
+            Assert.Equal(2, group.Files.Count);
+            Assert.Single(group.MissingFiles);
+            Assert.EndsWith("bhfuztp2.7z.001", group.MissingFiles[0], StringComparison.OrdinalIgnoreCase);
         }
         finally { Directory.Delete(root, true); }
     }

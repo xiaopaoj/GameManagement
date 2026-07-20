@@ -129,9 +129,9 @@ public partial class GameDetailWindow : Window
 
             UpdatePreparationTask(task, progress, 25, "正在扫描第一次解压候选…", copiedSource, "第一次解压中");
             var firstGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(copiedSource, cancellation.Token), cancellation.Token);
-            if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有发现 ZIP、RAR 或可识别的分卷组。");
+            if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有发现 ZIP、RAR、7z 或可识别的分卷组。");
             progress.Hide(); IsEnabled = true;
-            var firstGroup = SelectArchiveGroupWithHistory("选择第一次解压文件", "请选择第一次解压使用的 ZIP、RAR 或分卷组：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压");
+            var firstGroup = SelectArchiveGroupWithHistory("选择第一次解压文件", "请选择第一次解压使用的 ZIP、RAR、7z 或分卷组：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压");
             if (firstGroup is null) throw new OperationCanceledException("用户取消了第一次解压文件选择。", cancellation.Token);
             ConfirmMissingVolumes(firstGroup, "第一次解压");
             var firstArchive = firstGroup.EntryPath;
@@ -155,7 +155,7 @@ public partial class GameDetailWindow : Window
             }
             if (replayRecordedFallback && recordedFallbackPath is not null)
             {
-                var replayArchive = RenameForAttempt(recordedFallbackPath, version.SecondArchiveFormat.Equals("ZIP", StringComparison.OrdinalIgnoreCase) ? ".zip" : ".rar");
+                var replayArchive = RenameForAttempt(recordedFallbackPath, GetArchiveExtension(version.SecondArchiveFormat));
                 UpdatePreparationTask(task, progress, 65, $"正在重放历史第二次解压：{Path.GetFileName(replayArchive)}", replayArchive, "第二次解压中");
                 await ExtractWithCredentialAsync(version, replayArchive, step2, "第二次解压密码", progress, cancellation.Token, 2, version.SecondArchiveRelativePath ?? Path.GetFileName(recordedFallbackPath), true);
                 replayedFallback = true;
@@ -626,7 +626,7 @@ public partial class GameDetailWindow : Window
         var copiedSource = await SourceCopyService.CopyToWorkDirectoryAsync(version.SourcePath, sourceRoot, token);
         task.Progress = 18; task.Message = "正在扫描第一次解压候选"; progress.UpdateStatus(task.Message, 18);
         var firstGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(copiedSource, token), token);
-        if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有找到第一次解压使用的 ZIP、RAR 或分卷组。");
+        if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有找到第一次解压使用的 ZIP、RAR、7z 或分卷组。");
         progress.Hide(); IsEnabled = true;
         var firstGroup = SelectArchiveGroupWithHistory("特殊归档：第一次解压", "请选择用于构建干净基线的第一次压缩文件：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压");
         if (firstGroup is null) throw new OperationCanceledException("用户取消第一次解压选择。", token);
@@ -858,6 +858,13 @@ public partial class GameDetailWindow : Window
         File.Move(path, target);
         return target;
     }
+
+    private static string GetArchiveExtension(string format) => format.ToUpperInvariant() switch
+    {
+        "ZIP" => ".zip",
+        "7Z" => ".7z",
+        _ => ".rar"
+    };
 
     private string? PromptPassword(string title, string archivePath, string? existingPassword, PreparationProgressWindow progress)
     {
