@@ -5,7 +5,7 @@ using Microsoft.VisualBasic.FileIO;
 
 namespace GameManagement.Services;
 
-public sealed record ArchiveReadinessResult(bool Ready, IReadOnlyList<string> Problems, SaveSnapshotManifest? Manifest, ExternalBackupItem? Backup);
+public sealed record ArchiveReadinessResult(bool Ready, IReadOnlyList<string> Problems, SaveSnapshotManifest? Manifest, ExternalBackupItem? Backup, bool RequiresNoSaveConfirmation = false);
 
 public static class CurrentSaveManifestService
 {
@@ -55,10 +55,15 @@ public static class OrdinaryArchiveService
         if (state.SaveCandidates.Any(item => item.GameId == game.Id && item.Decision == SaveCandidateDecisions.Pending && (game.HasSystemSave || item.SourceKind != "系统目录"))) problems.Add("仍有待确认的存档变化。");
 
         SaveSnapshotManifest? manifest = null;
+        var requiresNoSaveConfirmation = false;
         try
         {
             manifest = await CurrentSaveManifestService.LoadAsync(state, game, token);
-            if (manifest is null) problems.Add("当前存档清单不存在，请先完成存档收集。");
+            if (manifest is null)
+            {
+                if (game.LastPlayedAt is null) requiresNoSaveConfirmation = true;
+                else problems.Add("当前存档清单不存在，请先完成存档收集。");
+            }
             else if (!await CurrentSaveManifestService.VerifyAsync(state, game, manifest, token)) problems.Add("当前存档文件或 Hash 校验失败。");
         }
         catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException)
@@ -66,18 +71,20 @@ public static class OrdinaryArchiveService
             problems.Add($"读取当前存档清单失败：{ex.Message}");
         }
 
-        return new ArchiveReadinessResult(problems.Count == 0, problems, manifest, null);
+        return new ArchiveReadinessResult(problems.Count == 0, problems, manifest, null, requiresNoSaveConfirmation);
     }
 
-    public static void MarkArchived(GameItem game, SaveSnapshotManifest manifest)
+    public static void MarkArchived(GameItem game, SaveSnapshotManifest? manifest)
     {
         game.ArchiveStatus = "已归档";
         game.Status = "已归档";
         game.ArchivedAt = DateTime.Now;
         game.ArchivedVersionId = game.CurrentVersionId;
-        game.ArchivedSnapshotId = manifest.SnapshotId == Guid.Empty ? null : manifest.SnapshotId;
-        game.ArchivedContentFingerprint = manifest.ContentFingerprint;
-        game.ArchiveMessage = "本地存档、清单及文件 Hash 均已校验完成；外部 ZIP 备份不作为归档前置条件。";
+        game.ArchivedSnapshotId = manifest is null || manifest.SnapshotId == Guid.Empty ? null : manifest.SnapshotId;
+        game.ArchivedContentFingerprint = manifest?.ContentFingerprint ?? string.Empty;
+        game.ArchiveMessage = manifest is null
+            ? "游戏准备后尚未运行，用户已人工确认无需保存存档并执行归档。"
+            : "本地存档、清单及文件 Hash 均已校验完成；外部 ZIP 备份不作为归档前置条件。";
         game.DirectoryCleanupStatus = !string.IsNullOrWhiteSpace(game.PlayableRootPath) && Directory.Exists(game.PlayableRootPath) ? "等待清理" : "目录不存在";
     }
 

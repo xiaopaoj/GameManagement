@@ -89,7 +89,16 @@ public sealed class GameItem
     public List<string> RetainedSourcePaths { get; set; } = [];
     public List<GameVersionItem> Versions { get; set; } = [];
     [JsonIgnore] public string SourcePathStatus => File.Exists(SourcePath) || Directory.Exists(SourcePath) ? "有效" : "失效";
-    [JsonIgnore] public string? IconFullPath => string.IsNullOrWhiteSpace(IconRelativePath) ? null : System.IO.Path.Combine(AppPaths.Root, IconRelativePath);
+    [JsonIgnore] public string? IconFullPath
+    {
+        get
+        {
+            var savedPath = !string.IsNullOrWhiteSpace(IconRelativePath)
+                ? IconRelativePath
+                : Versions.FirstOrDefault(version => version.Id == CurrentVersionId)?.IconRelativePath;
+            return string.IsNullOrWhiteSpace(savedPath) ? null : System.IO.Path.Combine(AppPaths.Root, savedPath);
+        }
+    }
     [JsonIgnore] public string LastRunDurationText => LastRunDurationSeconds is long seconds ? TimeSpan.FromSeconds(seconds).ToString(@"hh\:mm\:ss") : "暂无记录";
     [JsonIgnore] public string LocalSaveStatus => HasLocalSave ? "有" : "无";
 }
@@ -105,6 +114,7 @@ public sealed class GameVersionItem
     public string? FirstArchiveRelativePath { get; set; }
     public string? SecondArchiveRelativePath { get; set; }
     public string? ExecutableRelativePath { get; set; }
+    public string? IconRelativePath { get; set; }
     public string FirstArchiveFormat { get; set; } = string.Empty;
     public string SecondArchiveFormat { get; set; } = string.Empty;
     public bool SecondArchiveUsedFallback { get; set; }

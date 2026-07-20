@@ -541,6 +541,40 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 游戏图标应从当前版本保存的信息回退读取()
+    {
+        var version = new GameVersionItem { IconRelativePath = Path.Combine("data", "cache", "icons", "game.png") };
+        var game = new GameItem
+        {
+            CurrentVersionId = version.Id,
+            Versions = [version]
+        };
+
+        Assert.Equal(Path.Combine(AppPaths.Root, version.IconRelativePath), game.IconFullPath);
+    }
+
+    [Fact]
+    public void 归档清理后应保留游戏及版本图标信息()
+    {
+        var iconPath = Path.Combine("data", "cache", "icons", "game.png");
+        var version = new GameVersionItem { IconRelativePath = iconPath };
+        var game = new GameItem
+        {
+            CurrentVersionId = version.Id,
+            Versions = [version],
+            IconRelativePath = iconPath,
+            PlayableRootPath = Path.GetTempPath(),
+            ExecutableRelativePath = "Game.exe"
+        };
+
+        OrdinaryArchiveService.MarkCleanupSucceeded(game);
+
+        Assert.Equal(iconPath, game.IconRelativePath);
+        Assert.Equal(iconPath, version.IconRelativePath);
+        Assert.Equal(Path.Combine(AppPaths.Root, iconPath), game.IconFullPath);
+    }
+
+    [Fact]
     public async Task 文件基线应包含相对路径大小和SHA256()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -985,6 +1019,46 @@ public sealed class ModelTests
             Assert.True(ready.Ready);
             Assert.Equal(manifest.SnapshotId, ready.Manifest!.SnapshotId);
             Assert.Null(ready.Backup);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 已准备但从未运行的游戏应允许人工确认后直接归档()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var disk = new GameDiskItem { RootPath = root };
+            var game = new GameItem { PlayableRootPath = root, Status = "可游玩", HasSystemSave = false, LastPlayedAt = null, CurrentGameDiskId = disk.Id, CurrentSaveGameDiskId = disk.Id };
+            var readiness = await OrdinaryArchiveService.CheckReadinessAsync(new AppState { GameDisks = [disk] }, game);
+
+            Assert.True(readiness.Ready);
+            Assert.True(readiness.RequiresNoSaveConfirmation);
+            Assert.Null(readiness.Manifest);
+
+            OrdinaryArchiveService.MarkArchived(game, readiness.Manifest);
+            Assert.Equal("已归档", game.Status);
+            Assert.Contains("人工确认", game.ArchiveMessage);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task 已运行游戏缺少存档清单时仍应禁止归档()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var disk = new GameDiskItem { RootPath = root };
+            var game = new GameItem { PlayableRootPath = root, Status = "可游玩", HasSystemSave = false, LastPlayedAt = DateTime.Now.AddMinutes(-1), CurrentGameDiskId = disk.Id, CurrentSaveGameDiskId = disk.Id };
+            var readiness = await OrdinaryArchiveService.CheckReadinessAsync(new AppState { GameDisks = [disk] }, game);
+
+            Assert.False(readiness.Ready);
+            Assert.False(readiness.RequiresNoSaveConfirmation);
+            Assert.Contains(readiness.Problems, problem => problem.Contains("存档清单不存在"));
         }
         finally { Directory.Delete(root, true); }
     }

@@ -235,6 +235,7 @@ public partial class VersionManagementWindow : Window
         _game.CurrentVersionName = version.VersionName;
         _game.SourcePath = version.SourcePath;
         _game.SourceKind = version.SourceKind;
+        _game.IconRelativePath = version.IconRelativePath;
         if (string.IsNullOrWhiteSpace(_game.PlayableRootPath) || !Directory.Exists(_game.PlayableRootPath)) _game.Status = "未准备";
     }
 

@@ -51,6 +51,16 @@ public sealed class StateStore
                     if (version.Id == game.CurrentVersionId && string.IsNullOrWhiteSpace(version.ExecutableRelativePath) && !string.IsNullOrWhiteSpace(game.ExecutableRelativePath))
                         version.ExecutableRelativePath = game.ExecutableRelativePath;
                 }
+                var currentVersion = game.Versions.FirstOrDefault(version => version.Id == game.CurrentVersionId);
+                var cachedIconPath = Path.Combine(AppPaths.Data, "cache", "icons", $"{game.Id:N}.png");
+                if (string.IsNullOrWhiteSpace(game.IconRelativePath))
+                {
+                    game.IconRelativePath = !string.IsNullOrWhiteSpace(currentVersion?.IconRelativePath)
+                        ? currentVersion.IconRelativePath
+                        : File.Exists(cachedIconPath) ? Path.GetRelativePath(AppPaths.Root, cachedIconPath) : null;
+                }
+                if (currentVersion is not null && string.IsNullOrWhiteSpace(currentVersion.IconRelativePath) && !string.IsNullOrWhiteSpace(game.IconRelativePath))
+                    currentVersion.IconRelativePath = game.IconRelativePath;
                 foreach (var rule in state.SaveFileRules.Where(item => item.GameId == game.Id && item.SourceKind == "游戏目录"))
                 {
                     if (string.IsNullOrWhiteSpace(rule.SourceRootPath)) rule.SourceRootPath = game.PlayableRootPath ?? string.Empty;

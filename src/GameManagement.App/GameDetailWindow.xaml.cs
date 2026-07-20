@@ -234,7 +234,12 @@ public partial class GameDetailWindow : Window
             _game.CurrentGameDiskId = disk.Id;
             _game.PlayableRootPath = finalTarget;
             _game.ExecutableRelativePath = Path.GetRelativePath(finalTarget, finalExecutable);
-            _game.IconRelativePath = IconExtractionService.ExtractToCache(finalExecutable, _game.Id);
+            var extractedIconPath = IconExtractionService.ExtractToCache(finalExecutable, _game.Id);
+            if (!string.IsNullOrWhiteSpace(extractedIconPath))
+            {
+                version.IconRelativePath = extractedIconPath;
+                _game.IconRelativePath = extractedIconPath;
+            }
             ConfirmDirectoryNameAsNote(selectedGameRoot);
             _game.Status = "可游玩";
             _game.ArchiveStatus = "未归档";
@@ -441,7 +446,13 @@ public partial class GameDetailWindow : Window
             _game.ExecutableRelativePath = Path.GetRelativePath(_game.PlayableRootPath, selection.LaunchFile);
             var version = _game.Versions.FirstOrDefault(item => item.Id == _game.CurrentVersionId);
             if (version is not null) version.ExecutableRelativePath = Path.GetRelativePath(selection.GameRoot, selection.LaunchFile);
-            _game.IconRelativePath = IconExtractionService.ExtractToCache(selection.LaunchFile, _game.Id);
+            var extractedIconPath = IconExtractionService.ExtractToCache(selection.LaunchFile, _game.Id);
+            if (!string.IsNullOrWhiteSpace(extractedIconPath))
+            {
+                _game.IconRelativePath = extractedIconPath;
+                var currentVersion = _game.Versions.FirstOrDefault(item => item.Id == _game.CurrentVersionId);
+                if (currentVersion is not null) currentVersion.IconRelativePath = extractedIconPath;
+            }
             ConfirmDirectoryNameAsNote(selection.GameRoot);
             _save("游戏目录、启动文件和图标已重新识别");
             RefreshBindings();
@@ -571,6 +582,7 @@ public partial class GameDetailWindow : Window
         _game.CurrentVersionName = targetVersion.VersionName;
         _game.SourcePath = targetVersion.SourcePath;
         _game.SourceKind = targetVersion.SourceKind;
+        _game.IconRelativePath = targetVersion.IconRelativePath;
         _game.Status = "未准备";
         _save($"开始切换并准备版本：{targetVersion.VersionName}");
         RefreshBindings();
@@ -604,7 +616,15 @@ public partial class GameDetailWindow : Window
                 return false;
             }
 
-            OrdinaryArchiveService.MarkArchived(_game, readiness.Manifest!);
+            if (readiness.RequiresNoSaveConfirmation
+                && MessageBox.Show("该游戏已经准备完成，但尚未运行，因此没有生成存档清单。\n\n确认直接归档吗？此操作不会保存任何游戏存档。", "未运行游戏归档确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            {
+                task.Status = "已取消"; task.Message = "用户取消了未运行游戏的直接归档"; task.CompletedAt = DateTime.Now;
+                _game.Status = "可游玩"; _save(task.Message); RefreshBindings();
+                return false;
+            }
+
+            OrdinaryArchiveService.MarkArchived(_game, readiness.Manifest);
             task.Progress = 80; task.Message = "归档条件已满足，游戏已标记为已归档"; _save(task.Message); RefreshBindings();
             var delete = MessageBox.Show($"游戏已经成功归档。是否将当前可游玩目录移入 Windows 回收站以释放空间？\n\n{_game.PlayableRootPath}", "归档目录清理确认", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
             if (!delete)
