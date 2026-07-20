@@ -12,11 +12,15 @@ public partial class PasswordInputWindow : Window
         HistoryList.ItemsSource = passwordHistory ?? [];
         HistoryButton.IsEnabled = HistoryList.Items.Count > 0;
         if (existingPassword is not null) { PasswordValue.Text = existingPassword; NoPasswordCheck.IsChecked = existingPassword.Length == 0; }
-        Loaded += (_, _) => PasswordValue.Focus();
+        Loaded += (_, _) =>
+        {
+            HistoryPopup.IsOpen = HistoryList.Items.Count > 0;
+            PasswordValue.Focus();
+        };
     }
 
     private void NoPasswordCheck_Changed(object sender, RoutedEventArgs e) => PasswordValue.IsEnabled = NoPasswordCheck.IsChecked != true;
-    private void HistoryButton_Click(object sender, RoutedEventArgs e) => HistoryPopup.IsOpen = true;
+    private void HistoryButton_Click(object sender, RoutedEventArgs e) => HistoryPopup.IsOpen = !HistoryPopup.IsOpen;
     private void HistoryList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (HistoryList.SelectedItem is not string password) return;

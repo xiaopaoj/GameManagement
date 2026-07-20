@@ -718,6 +718,21 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 解压密码历史存在时应默认展开并允许按钮切换状态()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var xaml = File.ReadAllText(Path.Combine(appRoot, "PasswordInputWindow.xaml"));
+        var source = File.ReadAllText(Path.Combine(appRoot, "PasswordInputWindow.xaml.cs"));
+
+        Assert.Contains("StaysOpen=\"True\"", xaml);
+        Assert.Contains("HistoryPopup.IsOpen = HistoryList.Items.Count > 0;", source);
+        Assert.Contains("HistoryPopup.IsOpen = !HistoryPopup.IsOpen;", source);
+    }
+
+    [Fact]
     public void MP4前缀和ZIP尾部的混合文件应识别为ZIP()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
