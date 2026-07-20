@@ -617,7 +617,7 @@ public partial class GameDetailWindow : Window
             }
 
             if (readiness.RequiresNoSaveConfirmation
-                && MessageBox.Show("该游戏已经准备完成，但尚未运行，因此没有生成存档清单。\n\n确认直接归档吗？此操作不会保存任何游戏存档。", "未运行游戏归档确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                && MessageBox.Show("该游戏当前没有运行，并且没有可校验的存档清单。\n\n确认直接归档吗？此操作不会保存任何尚未收集的游戏存档。", "无存档清单归档确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             {
                 task.Status = "已取消"; task.Message = "用户取消了未运行游戏的直接归档"; task.CompletedAt = DateTime.Now;
                 _game.Status = "可游玩"; _save(task.Message); RefreshBindings();

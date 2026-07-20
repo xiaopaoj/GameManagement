@@ -1024,7 +1024,7 @@ public sealed class ModelTests
     }
 
     [Fact]
-    public async Task 已准备但从未运行的游戏应允许人工确认后直接归档()
+    public async Task 已准备且当前未运行的游戏缺少清单时应允许人工确认后直接归档()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -1046,7 +1046,7 @@ public sealed class ModelTests
     }
 
     [Fact]
-    public async Task 已运行游戏缺少存档清单时仍应禁止归档()
+    public async Task 曾运行但当前未运行的游戏缺少清单时也应允许人工确认后归档()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -1056,9 +1056,9 @@ public sealed class ModelTests
             var game = new GameItem { PlayableRootPath = root, Status = "可游玩", HasSystemSave = false, LastPlayedAt = DateTime.Now.AddMinutes(-1), CurrentGameDiskId = disk.Id, CurrentSaveGameDiskId = disk.Id };
             var readiness = await OrdinaryArchiveService.CheckReadinessAsync(new AppState { GameDisks = [disk] }, game);
 
-            Assert.False(readiness.Ready);
-            Assert.False(readiness.RequiresNoSaveConfirmation);
-            Assert.Contains(readiness.Problems, problem => problem.Contains("存档清单不存在"));
+            Assert.True(readiness.Ready);
+            Assert.True(readiness.RequiresNoSaveConfirmation);
+            Assert.Null(readiness.Manifest);
         }
         finally { Directory.Delete(root, true); }
     }

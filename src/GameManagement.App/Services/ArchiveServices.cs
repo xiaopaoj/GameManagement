@@ -61,8 +61,7 @@ public static class OrdinaryArchiveService
             manifest = await CurrentSaveManifestService.LoadAsync(state, game, token);
             if (manifest is null)
             {
-                if (game.LastPlayedAt is null) requiresNoSaveConfirmation = true;
-                else problems.Add("当前存档清单不存在，请先完成存档收集。");
+                requiresNoSaveConfirmation = true;
             }
             else if (!await CurrentSaveManifestService.VerifyAsync(state, game, manifest, token)) problems.Add("当前存档文件或 Hash 校验失败。");
         }
@@ -83,7 +82,7 @@ public static class OrdinaryArchiveService
         game.ArchivedSnapshotId = manifest is null || manifest.SnapshotId == Guid.Empty ? null : manifest.SnapshotId;
         game.ArchivedContentFingerprint = manifest?.ContentFingerprint ?? string.Empty;
         game.ArchiveMessage = manifest is null
-            ? "游戏准备后尚未运行，用户已人工确认无需保存存档并执行归档。"
+            ? "游戏当前未运行且没有存档清单，用户已人工确认无需保存存档并执行归档。"
             : "本地存档、清单及文件 Hash 均已校验完成；外部 ZIP 备份不作为归档前置条件。";
         game.DirectoryCleanupStatus = !string.IsNullOrWhiteSpace(game.PlayableRootPath) && Directory.Exists(game.PlayableRootPath) ? "等待清理" : "目录不存在";
     }
