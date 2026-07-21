@@ -29,6 +29,49 @@ public sealed class ModelTests
         Assert.DoesNotContain(game.Id.ToString(), character => character > 127);
     }
 
+    [Fact]
+    public void 游戏库应按添加时间和游玩时间倒序排序()
+    {
+        var addedAt = new DateTime(2026, 7, 21, 12, 0, 0);
+        var older = new GameItem { DisplayName = "较早添加", AddedAt = addedAt.AddDays(-1), LastPlayedAt = addedAt.AddHours(2) };
+        var lessRecentlyPlayed = new GameItem { DisplayName = "较早游玩", AddedAt = addedAt, LastPlayedAt = addedAt.AddHours(1) };
+        var recentlyPlayed = new GameItem { DisplayName = "较晚游玩", AddedAt = addedAt, LastPlayedAt = addedAt.AddHours(2) };
+
+        var result = MainViewModel.SortGames([older, lessRecentlyPlayed, recentlyPlayed]).ToList();
+
+        Assert.Equal([recentlyPlayed, lessRecentlyPlayed, older], result);
+    }
+
+    [Fact]
+    public void 扫描候选应按文件修改时间倒序排序()
+    {
+        var modifiedAt = new DateTime(2026, 7, 21, 12, 0, 0);
+        var older = new ScanCandidate { Name = "较早文件", ModifiedAt = modifiedAt.AddDays(-1) };
+        var sameTimeB = new ScanCandidate { Name = "B", ModifiedAt = modifiedAt };
+        var sameTimeA = new ScanCandidate { Name = "A", ModifiedAt = modifiedAt };
+
+        var result = MainViewModel.SortCandidates([older, sameTimeB, sameTimeA]).ToList();
+
+        Assert.Equal([sameTimeA, sameTimeB, older], result);
+    }
+
+    [Fact]
+    public void 旧游戏应使用最早版本时间迁移添加时间()
+    {
+        var earlier = new DateTime(2025, 1, 1);
+        var game = new GameItem
+        {
+            Versions =
+            [
+                new GameVersionItem { CreatedAt = earlier.AddDays(1) },
+                new GameVersionItem { CreatedAt = earlier }
+            ]
+        };
+
+        Assert.Equal(earlier, StateStore.ResolveAddedAt(game));
+        Assert.Equal(DateTime.MinValue, StateStore.ResolveAddedAt(new GameItem()));
+    }
+
     [Theory]
     [InlineData("示例游戏.zip", SourceKinds.ArchiveFile, "示例游戏")]
     [InlineData("示例游戏.rar", SourceKinds.ArchiveFile, "示例游戏")]

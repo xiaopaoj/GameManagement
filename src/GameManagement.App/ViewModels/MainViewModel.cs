@@ -91,10 +91,25 @@ public sealed class MainViewModel : ObservableObject
 
     private void LoadCollections()
     {
-        Games.Clear(); foreach (var item in _state.Games) Games.Add(item);
+        RefreshGameOrder();
         ScanPaths.Clear(); foreach (var item in _state.ScanPaths) ScanPaths.Add(item);
         GameDisks.Clear(); foreach (var item in _state.GameDisks) GameDisks.Add(item);
         Tasks.Clear(); foreach (var item in _state.OperationTasks.OrderByDescending(task => task.StartedAt)) Tasks.Add(item);
+    }
+
+    public static IEnumerable<GameItem> SortGames(IEnumerable<GameItem> games) => games
+        .OrderByDescending(game => game.AddedAt)
+        .ThenByDescending(game => game.LastPlayedAt ?? DateTime.MinValue)
+        .ThenBy(game => game.DisplayName, StringComparer.CurrentCultureIgnoreCase);
+
+    public static IEnumerable<ScanCandidate> SortCandidates(IEnumerable<ScanCandidate> candidates) => candidates
+        .OrderByDescending(candidate => candidate.ModifiedAt)
+        .ThenBy(candidate => candidate.Name, StringComparer.CurrentCultureIgnoreCase);
+
+    private void RefreshGameOrder()
+    {
+        Games.Clear();
+        foreach (var item in SortGames(_state.Games)) Games.Add(item);
     }
 
     private static string? PickFolder(string title)
@@ -172,7 +187,7 @@ public sealed class MainViewModel : ObservableObject
         if (CandidateAddedFilter == "未添加") query = query.Where(candidate => !candidate.Added);
         if (CandidateAddedFilter == "已添加") query = query.Where(candidate => candidate.Added);
         if (CandidateDriveFilter != "全部") query = query.Where(candidate => string.Equals(candidate.DriveName, CandidateDriveFilter, StringComparison.OrdinalIgnoreCase));
-        VisibleCandidates.Clear(); foreach (var item in query) VisibleCandidates.Add(item);
+        VisibleCandidates.Clear(); foreach (var item in SortCandidates(query)) VisibleCandidates.Add(item);
     }
 
     private void RefreshCandidateFilterOptions()
@@ -225,6 +240,7 @@ public sealed class MainViewModel : ObservableObject
                 var displayName = GetCandidateDisplayName(item.Candidate);
                 var game = new GameItem
                 {
+                    AddedAt = DateTime.Now,
                     DisplayName = displayName,
                     Note = displayName,
                     SourcePath = item.Candidate.FullPath,
@@ -236,6 +252,7 @@ public sealed class MainViewModel : ObservableObject
                 Games.Add(game); _state.Games.Add(game); item.Candidate.Added = true;
             }
 
+            RefreshGameOrder();
             RefreshCandidates();
             task.Status = "完成"; task.Progress = 100; task.Message = $"已添加 {prepared.Count} 个游戏并保存来源指纹"; task.CompletedAt = DateTime.Now;
             Save(task.Message);
@@ -333,7 +350,7 @@ public sealed class MainViewModel : ObservableObject
         {
             _store.Save(_state);
             StatusMessage = message;
-            CollectionViewSource.GetDefaultView(Games).Refresh();
+            RefreshGameOrder();
             AppLogger.Info($"{game.DisplayName}：{message}");
             if (message.StartsWith("主游戏程序已退出", StringComparison.Ordinal)) await DetectSaveChangesAfterExitAsync(game);
         });

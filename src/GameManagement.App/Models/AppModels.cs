@@ -56,6 +56,7 @@ public sealed class GameDiskItem
 public sealed class GameItem
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public DateTime AddedAt { get; set; }
     public string DisplayName { get; set; } = string.Empty;
     public string Note { get; set; } = string.Empty;
     public string SourcePath { get; set; } = string.Empty;

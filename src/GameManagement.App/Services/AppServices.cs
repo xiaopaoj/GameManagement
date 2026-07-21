@@ -44,6 +44,7 @@ public sealed class StateStore
             var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(AppPaths.StateFile), Options) ?? new AppState();
             foreach (var game in state.Games)
             {
+                if (game.AddedAt == default) game.AddedAt = ResolveAddedAt(game);
                 if (string.IsNullOrWhiteSpace(game.SourceKind) || game.SourceKind == SourceKinds.Unknown) game.SourceKind = SourceKinds.Detect(game.SourcePath);
                 foreach (var version in game.Versions)
                 {
@@ -83,6 +84,10 @@ public sealed class StateStore
             File.Move(temp, AppPaths.StateFile, true);
         }
     }
+
+    public static DateTime ResolveAddedAt(GameItem game) => game.Versions.Count > 0
+        ? game.Versions.Min(version => version.CreatedAt)
+        : DateTime.MinValue;
 }
 
 public static class OperationTaskRecoveryService
@@ -161,7 +166,7 @@ public sealed class FileScanner
         }
         progress?.Report(new ScanProgressInfo { Completed = completed, Total = entries.Count, CurrentPath = "扫描完成", IsCompleted = true });
         foreach (var item in enabledPaths) item.LastScannedAt = DateTime.Now;
-        return result.OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        return result.OrderByDescending(candidate => candidate.ModifiedAt).ThenBy(candidate => candidate.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
     }, token);
     private static bool HasSupportedArchiveExtension(string path)
     {
