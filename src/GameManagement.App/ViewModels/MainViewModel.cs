@@ -442,20 +442,11 @@ public sealed class MainViewModel : ObservableObject
     public void ExecuteSelectedGameAction(string action)
     {
         if (SelectedGame is null) { StatusMessage = "请先选择一个游戏"; return; }
-        var window = new GameDetailWindow(SelectedGame, _state, message => Save(message), OnGameStateChanged)
+        var actionHost = new GameDetailWindow(SelectedGame, _state, message => Save(message), OnGameStateChanged, directActionHost: true)
         {
-            Owner = Application.Current.MainWindow,
-            ShowActivated = false,
-            ShowInTaskbar = false,
-            Opacity = 0,
-            Width = 1,
-            Height = 1,
-            Left = -10000,
-            Top = -10000
+            Owner = Application.Current.MainWindow
         };
-        window.Show();
-        window.ExecuteAction(action);
-        if (action is not ("准备游玩" or "启动游戏" or "归档游戏" or "特殊归档" or "手动备份" or "版本管理" or "识别游戏目录")) window.Close();
+        actionHost.ExecuteAction(action);
     }
 
     public void OpenExtractionTemplates() => new ExtractionTemplateWindow(_state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();

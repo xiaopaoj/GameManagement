@@ -735,7 +735,7 @@ public sealed class ModelTests
     }
 
     [Fact]
-    public void 准备完成提示应由游戏详情窗口持有并在关闭进度后恢复激活()
+    public void 准备完成提示应由实际调用窗口持有并在关闭进度后恢复激活()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
@@ -743,8 +743,8 @@ public sealed class ModelTests
         var source = File.ReadAllText(Path.Combine(root!.FullName, "src", "GameManagement.App", "GameDetailWindow.xaml.cs"));
 
         Assert.Contains("RestoreAfterProgressDialog(progress);", source);
-        Assert.Contains("MessageBox.Show(this, \"游戏准备完成。\"", source);
-        Assert.Contains("WindowInteractionService.CompleteProgress(this, progress);", source);
+        Assert.Contains("MessageBox.Show(DialogOwner, \"游戏准备完成。\"", source);
+        Assert.Contains("WindowInteractionService.CompleteProgress(DialogOwner, progress);", source);
     }
 
     [Fact]
@@ -760,12 +760,19 @@ public sealed class ModelTests
         Assert.Contains("MessageBox.Show(this, result.ContentChanged", saveSource);
         Assert.Contains("finally { WindowInteractionService.CompleteProgress(this, progress); }", saveSource);
 
-        foreach (var fileName in new[] { "BackupScheduleWindow.xaml.cs", "CredentialManagementWindow.xaml.cs", "GameDetailWindow.xaml.cs" })
+        foreach (var fileName in new[] { "BackupScheduleWindow.xaml.cs", "CredentialManagementWindow.xaml.cs" })
         {
             var source = File.ReadAllText(Path.Combine(appRoot, fileName));
             Assert.Contains("WindowInteractionService.RestoreBeforeDialog(this, progress", source);
             Assert.Contains("WindowInteractionService.CompleteProgress(this, progress", source);
         }
+        var gameDetailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
+        Assert.Contains("WindowInteractionService.RestoreBeforeDialog(DialogOwner, progress", gameDetailSource);
+        Assert.Contains("WindowInteractionService.CompleteProgress(DialogOwner, progress", gameDetailSource);
+
+        var mainViewModelSource = File.ReadAllText(Path.Combine(appRoot, "ViewModels", "MainViewModel.cs"));
+        Assert.Contains("directActionHost: true", mainViewModelSource);
+        Assert.DoesNotContain("actionHost.Show()", mainViewModelSource);
     }
 
     [Fact]
