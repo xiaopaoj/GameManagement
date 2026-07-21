@@ -13,6 +13,7 @@ public sealed class AppState
     public List<GameItem> Games { get; set; } = [];
     public List<ArchiveCredentialItem> Credentials { get; set; } = [];
     public List<PasswordHistoryItem> PasswordHistory { get; set; } = [];
+    public List<ExtractionTemplateItem> ExtractionTemplates { get; set; } = [];
     public List<FileBaselineItem> FileBaselines { get; set; } = [];
     public List<SaveFileRuleItem> SaveFileRules { get; set; } = [];
     public List<SaveFileExclusionItem> SaveFileExclusions { get; set; } = [];
@@ -57,6 +58,7 @@ public sealed class GameItem
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public DateTime AddedAt { get; set; }
+    public Guid? ExtractionTemplateId { get; set; }
     public string DisplayName { get; set; } = string.Empty;
     public string Note { get; set; } = string.Empty;
     public string SourcePath { get; set; } = string.Empty;
@@ -148,6 +150,16 @@ public sealed class PasswordHistoryItem
     public string EncryptedPassword { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public DateTime LastUsedAt { get; set; } = DateTime.Now;
+}
+
+public sealed class ExtractionTemplateItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Name { get; set; } = string.Empty;
+    public string EncryptedFirstPassword { get; set; } = string.Empty;
+    public string EncryptedSecondPassword { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime UpdatedAt { get; set; } = DateTime.Now;
 }
 
 public sealed class ArchiveVolumeGroup

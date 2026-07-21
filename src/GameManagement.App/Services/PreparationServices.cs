@@ -90,6 +90,25 @@ public static class CredentialService
     }
 }
 
+public static class ExtractionTemplateService
+{
+    public static void SetPasswords(ExtractionTemplateItem template, string firstPassword, string secondPassword)
+    {
+        template.EncryptedFirstPassword = CredentialService.Encrypt(firstPassword, template.Id);
+        template.EncryptedSecondPassword = CredentialService.Encrypt(secondPassword, template.Id);
+        template.UpdatedAt = DateTime.Now;
+    }
+
+    public static string? GetPassword(AppState state, GameItem game, int stepOrder)
+    {
+        if (game.ExtractionTemplateId is not Guid templateId) return null;
+        var template = state.ExtractionTemplates.FirstOrDefault(item => item.Id == templateId);
+        if (template is null) return null;
+        var encrypted = stepOrder == 1 ? template.EncryptedFirstPassword : template.EncryptedSecondPassword;
+        return string.IsNullOrEmpty(encrypted) ? string.Empty : CredentialService.Decrypt(encrypted, template.Id);
+    }
+}
+
 public static class FileFingerprintService
 {
     public static async Task<string> ComputeSha256Async(string path, CancellationToken token = default)

@@ -17,6 +17,7 @@ public partial class GameDetailWindow : Window
     private bool _autoReplayRemainingHistory;
     private readonly string? _initialAction;
     private bool _initialActionExecuted;
+    private Window DialogOwner => Opacity == 0 && Owner is Window owner ? owner : this;
 
     public GameDetailWindow(GameItem game, AppState state, Action<string> save, Action<GameItem, string> gameStateChanged, string? initialAction = null)
     {
@@ -35,8 +36,13 @@ public partial class GameDetailWindow : Window
     {
         if (_initialActionExecuted || string.IsNullOrWhiteSpace(_initialAction)) return;
         _initialActionExecuted = true;
+        ExecuteAction(_initialAction);
+    }
+
+    public void ExecuteAction(string action)
+    {
         var args = new RoutedEventArgs();
-        switch (_initialAction)
+        switch (action)
         {
             case "准备游玩": Prepare_Click(this, args); break;
             case "编辑名称与备注": EditGame_Click(this, args); break;
@@ -48,6 +54,7 @@ public partial class GameDetailWindow : Window
             case "存档与快照": Snapshots_Click(this, args); break;
             case "版本管理": Versions_Click(this, args); break;
             case "解压密码管理": Credentials_Click(this, args); break;
+            case "选择解压模板": ExtractionTemplate_Click(this, args); break;
             case "识别游戏目录": RecognizeGame_Click(this, args); break;
             case "重新定位原始文件": RelocateSource_Click(this, args); break;
             case "删除原始文件": DeleteSource_Click(this, args); break;
@@ -134,7 +141,7 @@ public partial class GameDetailWindow : Window
         using var cancellation = new CancellationTokenSource();
         var task = new OperationTaskItem { Name = $"准备游戏：{_game.DisplayName}", TaskType = "准备游玩", GameId = _game.Id, GameVersionId = version.Id, Status = "运行中", Message = "正在初始化准备任务", WorkingDirectory = workRoot };
         _state.OperationTasks.Add(task); _save("准备游玩任务已创建");
-        var progress = new PreparationProgressWindow { Owner = this };
+        var progress = new PreparationProgressWindow { Owner = DialogOwner };
         progress.EnableCancellation(cancellation.Cancel);
         progress.Show(); IsEnabled = false;
         var finalCommitted = false;
@@ -338,7 +345,7 @@ public partial class GameDetailWindow : Window
         var versionChoice = SelectChoice("选择特殊归档版本", "请选择混乱目录对应的游戏版本：", _game.Versions.Select(item => new ChoiceItem { Name = item.VersionName, Description = item.SourcePath, Value = item }));
         if (versionChoice?.Value is not GameVersionItem version) return;
         var folderDialog = new OpenFolderDialog { Title = "选择需要特殊归档的混乱游戏目录", Multiselect = false };
-        if (folderDialog.ShowDialog(this) != true) return;
+        if (folderDialog.ShowDialog(DialogOwner) != true) return;
         var mixedRoot = folderDialog.FolderName;
         var disks = _state.GameDisks.Where(item => item.Enabled && Directory.Exists(item.RootPath)).OrderByDescending(item => item.IsDefault).ThenBy(item => item.DisplayName).ToList();
         var diskChoice = SelectChoice("选择特殊归档操作盘", "请选择用于 GameSaveTemp 和本地存档的游戏盘：", disks.Select(item => new ChoiceItem { Name = item.DisplayName, Description = item.RootPath, Value = item }));
@@ -356,7 +363,7 @@ public partial class GameDetailWindow : Window
         var task = new OperationTaskItem { Name = $"特殊归档：{_game.DisplayName}", TaskType = "特殊归档", GameId = _game.Id, GameVersionId = version.Id, Status = "运行中", Message = "正在初始化特殊归档", WorkingDirectory = workRoot, CurrentPath = mixedRoot };
         _state.OperationTasks.Add(task); _save("特殊归档任务已创建");
         using var cancellation = new CancellationTokenSource();
-        var progress = new PreparationProgressWindow("正在执行特殊归档") { Owner = this };
+        var progress = new PreparationProgressWindow("正在执行特殊归档") { Owner = DialogOwner };
         progress.EnableCancellation(cancellation.Cancel);
         IsEnabled = false; progress.Show();
         try
@@ -386,7 +393,7 @@ public partial class GameDetailWindow : Window
             }
 
             progress.Hide(); IsEnabled = true;
-            var selectionWindow = new SpecialArchiveSelectionWindow(differences, completeBaseline) { Owner = this };
+            var selectionWindow = new SpecialArchiveSelectionWindow(differences, completeBaseline) { Owner = DialogOwner };
             if (selectionWindow.ShowDialog() != true) throw new OperationCanceledException("用户取消了特殊归档文件选择。", cancellation.Token);
             IsEnabled = false; progress.Show();
             var candidates = SpecialArchiveComparisonService.CreateSaveCandidates(_game, version, mixedRoot, selectionWindow.SelectedFiles);
@@ -436,7 +443,7 @@ public partial class GameDetailWindow : Window
     }
     private async void ManualBackup_Click(object sender, RoutedEventArgs e)
     {
-        var progress = new PreparationProgressWindow("正在创建并校验单游戏无密码 ZIP 备份") { Owner = this };
+        var progress = new PreparationProgressWindow("正在创建并校验单游戏无密码 ZIP 备份") { Owner = DialogOwner };
         using var cancellation = new CancellationTokenSource();
         progress.EnableCancellation(cancellation.Cancel);
         IsEnabled = false; progress.Show();
@@ -451,14 +458,26 @@ public partial class GameDetailWindow : Window
         catch (Exception ex) { AppLogger.Error($"手动备份失败：{_game.DisplayName}", ex); WindowInteractionService.RestoreBeforeDialog(this, progress); MessageBox.Show(this, ex.Message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error); }
         finally { WindowInteractionService.CompleteProgress(this, progress); }
     }
-    private void SaveDirectories_Click(object sender, RoutedEventArgs e) => new SystemSaveDirectoryWindow(_game, _state, _save) { Owner = this }.ShowDialog();
-    private void Snapshots_Click(object sender, RoutedEventArgs e) => new SaveManagementWindow(_state, _save, _game) { Owner = this }.ShowDialog();
+    private void SaveDirectories_Click(object sender, RoutedEventArgs e) => new SystemSaveDirectoryWindow(_game, _state, _save) { Owner = DialogOwner }.ShowDialog();
+    private void Snapshots_Click(object sender, RoutedEventArgs e) => new SaveManagementWindow(_state, _save, _game) { Owner = DialogOwner }.ShowDialog();
     private async void Versions_Click(object sender, RoutedEventArgs e)
     {
         var requested = OpenVersionManagement(null);
         if (requested is not null) await SwitchAndPrepareAsync(requested);
     }
-    private void Credentials_Click(object sender, RoutedEventArgs e) => new CredentialManagementWindow(_game, _state, _save) { Owner = this }.ShowDialog();
+    private void Credentials_Click(object sender, RoutedEventArgs e) => new CredentialManagementWindow(_game, _state, _save) { Owner = DialogOwner }.ShowDialog();
+
+    private void ExtractionTemplate_Click(object sender, RoutedEventArgs e)
+    {
+        var choices = new[] { new ChoiceItem { Name = "不使用模板", Description = "准备时按压缩文件历史或人工输入密码", Value = null } }
+            .Concat(_state.ExtractionTemplates.OrderBy(item => item.Name).Select(item => new ChoiceItem { Name = item.Name, Description = "自动提供第一次与第二次解压密码", Value = item }))
+            .ToList();
+        var choice = SelectChoice("选择解压流程模板", "请选择该游戏准备时使用的解压流程模板：", choices);
+        if (choice is null) return;
+        _game.ExtractionTemplateId = (choice.Value as ExtractionTemplateItem)?.Id;
+        _save(_game.ExtractionTemplateId is null ? "已取消游戏的解压流程模板" : $"已为游戏选择解压流程模板：{choice.Name}");
+        RefreshBindings();
+    }
     private async void RecognizeGame_Click(object sender, RoutedEventArgs e)
     {
         if (_game.Status == "运行中") { ShowError("游戏运行期间不允许修改启动文件。"); return; }
@@ -505,7 +524,7 @@ public partial class GameDetailWindow : Window
         var detail = string.Join("\n", files.Take(12));
         if (files.Count > 12) detail += $"\n……另有 {files.Count - 12} 个文件";
         if (MessageBox.Show($"第一次确认：删除后该版本可能无法再次准备。\n\n游戏：{_game.DisplayName}\n版本：{version.VersionName}\n原始路径：{version.SourcePath}\n文件数量：{files.Count}\n总体积：{Models.SizeFormatter.Format(totalSize)}\n\n将进入回收站的文件：\n{detail}\n\n是否继续？", "删除原始文件风险确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return false;
-        var input = new TextInputWindow("第二次确认", $"请输入完整版本名称“{version.VersionName}”以确认将原始压缩包和分卷移入 Windows 回收站：", string.Empty) { Owner = this };
+        var input = new TextInputWindow("第二次确认", $"请输入完整版本名称“{version.VersionName}”以确认将原始压缩包和分卷移入 Windows 回收站：", string.Empty) { Owner = DialogOwner };
         if (input.ShowDialog() != true || !input.Value.Equals(version.VersionName, StringComparison.Ordinal)) { ShowError("版本名称不匹配，删除操作已取消。"); return false; }
         try { SourceDeletionService.MoveSourcesToRecycleBin(_state, _game, version, files); return true; }
         catch (Exception ex) { ShowError($"原始文件未能全部进入回收站：{ex.Message}\n\n软件不会降级为永久删除。"); return false; }
@@ -514,7 +533,7 @@ public partial class GameDetailWindow : Window
     private void DeleteGameRecord_Click(object sender, RoutedEventArgs e)
     {
         if (_game.Status == "运行中") { ShowError("主游戏程序运行期间禁止删除游戏记录。"); return; }
-        var dialog = new GameRecordDeletionWindow(_state, _game) { Owner = this };
+        var dialog = new GameRecordDeletionWindow(_state, _game) { Owner = DialogOwner };
         if (dialog.ShowDialog() != true) return;
         try { GameRecordDeletionService.RemoveWithRelatedData(_state, _game, dialog.Options); _save("游戏主记录及勾选的关联数据已删除"); DialogResult = true; }
         catch (Exception ex) { ShowError(ex.Message); }
@@ -539,7 +558,7 @@ public partial class GameDetailWindow : Window
             catch (Exception ex) { _save("游戏启动失败"); MessageBox.Show(ex.Message, "启动失败", MessageBoxButton.OK, MessageBoxImage.Error); }
             return;
         }
-        var progressWindow = new PreparationProgressWindow("正在建立系统存档监控快照") { Owner = this };
+        var progressWindow = new PreparationProgressWindow("正在建立系统存档监控快照") { Owner = DialogOwner };
         using var cancellation = new CancellationTokenSource();
         progressWindow.EnableCancellation(cancellation.Cancel);
         try
@@ -574,7 +593,7 @@ public partial class GameDetailWindow : Window
 
     private void EditGame_Click(object sender, RoutedEventArgs e)
     {
-        var editWindow = new GameEditWindow(_game.DisplayName, _game.Note) { Owner = this };
+        var editWindow = new GameEditWindow(_game.DisplayName, _game.Note) { Owner = DialogOwner };
         if (editWindow.ShowDialog() != true) return;
         _game.DisplayName = editWindow.GameName; _game.Note = editWindow.Note;
         _save("游戏名称与备注已更新"); RefreshBindings();
@@ -582,7 +601,7 @@ public partial class GameDetailWindow : Window
 
     private GameVersionItem? OpenVersionManagement(Guid? selectedVersionId)
     {
-        var window = new VersionManagementWindow(_game, _state, _save, selectedVersionId) { Owner = this };
+        var window = new VersionManagementWindow(_game, _state, _save, selectedVersionId) { Owner = DialogOwner };
         window.ShowDialog();
         RefreshBindings();
         return window.RequestedPreparationVersion;
@@ -624,7 +643,7 @@ public partial class GameDetailWindow : Window
             _save("普通归档前游戏目录存档扫描完成");
             if (_state.SaveCandidates.Any(item => item.GameId == _game.Id && item.Decision == SaveCandidateDecisions.Pending))
             {
-                new SaveManagementWindow(_state, _save, _game) { Owner = this }.ShowDialog();
+                new SaveManagementWindow(_state, _save, _game) { Owner = DialogOwner }.ShowDialog();
             }
 
             var readiness = await OrdinaryArchiveService.CheckReadinessAsync(_state, _game);
@@ -758,7 +777,9 @@ public partial class GameDetailWindow : Window
 
     private ChoiceItem? SelectChoice(string title, string prompt, IEnumerable<ChoiceItem> choices)
     {
-        var window = new ChoiceWindow(title, prompt, choices) { Owner = this };
+        var materialized = choices.ToList();
+        if (materialized.Count == 1) return materialized[0];
+        var window = new ChoiceWindow(title, prompt, materialized) { Owner = DialogOwner };
         return window.ShowDialog() == true ? window.SelectedChoice : null;
     }
 
@@ -780,7 +801,7 @@ public partial class GameDetailWindow : Window
     private bool ConfirmHistoryReplay(string stepName, string archivePath, bool allowAutoReplayFollowingSteps = false)
     {
         if (_autoReplayRemainingHistory) return true;
-        var dialog = new HistoryReplayWindow(stepName, archivePath, allowAutoReplayFollowingSteps) { Owner = this };
+        var dialog = new HistoryReplayWindow(stepName, archivePath, allowAutoReplayFollowingSteps) { Owner = DialogOwner };
         var useHistory = dialog.ShowDialog() == true && dialog.UseHistory;
         if (useHistory && allowAutoReplayFollowingSteps && dialog.AutoReplayFollowingSteps) _autoReplayRemainingHistory = true;
         return useHistory;
@@ -814,13 +835,14 @@ public partial class GameDetailWindow : Window
             return SelectManualLaunchFile(searchRoot);
         }
 
+        if (discovery.Candidates.Count == 1) return new GameLaunchSelection(discovery.GameRoot, discovery.Candidates[0].Path);
         var choices = discovery.Candidates.Select((candidate, index) => new ChoiceItem
         {
             Name = $"{(index == 0 ? "推荐｜" : string.Empty)}{Path.GetFileName(candidate.Path)}",
             Description = $"评分 {candidate.Score}｜{string.Join("、", candidate.Reasons)}｜{Models.SizeFormatter.Format(new FileInfo(candidate.Path).Length)}｜{Path.GetRelativePath(discovery.GameRoot, candidate.Path)}",
             Value = candidate.Path
         });
-        var window = new ChoiceWindow("选择游戏启动文件", $"已确定游戏目录：\n{discovery.GameRoot}\n\n候选按评分从高到低排列。请选择目录直属的 EXE/index.html，或手动选择文件：", choices, true) { Owner = this };
+        var window = new ChoiceWindow("选择游戏启动文件", $"已确定游戏目录：\n{discovery.GameRoot}\n\n候选按评分从高到低排列。请选择目录直属的 EXE/index.html，或手动选择文件：", choices, true) { Owner = DialogOwner };
         if (window.ShowDialog() != true) return null;
         if (window.ManualSelectionRequested) return SelectManualLaunchFile(searchRoot);
         return window.SelectedChoice?.Value is string launchFile ? new GameLaunchSelection(discovery.GameRoot, launchFile) : null;
@@ -836,7 +858,7 @@ public partial class GameDetailWindow : Window
             Multiselect = false,
             CheckFileExists = true
         };
-        if (dialog.ShowDialog(this) != true) return null;
+        if (dialog.ShowDialog(DialogOwner) != true) return null;
         var selectedPath = Path.GetFullPath(dialog.FileName);
         if (!IsPathWithinRoot(searchRoot, selectedPath)) { ShowError("启动文件必须位于本次识别的游戏目录范围内。"); return null; }
         var isValid = Path.GetExtension(selectedPath).Equals(".exe", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(selectedPath).Equals("index.html", StringComparison.OrdinalIgnoreCase);
@@ -861,7 +883,8 @@ public partial class GameDetailWindow : Window
     private async Task ExtractWithCredentialAsync(GameVersionItem version, string archivePath, string outputDirectory, string title, PreparationProgressWindow progress, CancellationToken token, int stepOrder, string archiveRelativePath, bool allowPasswordRetry)
     {
         var fingerprint = await FileFingerprintService.ComputeSha256Async(archivePath, token);
-        var password = CredentialService.FindPassword(_state, version.Id, fingerprint);
+        var password = CredentialService.FindPassword(_state, version.Id, fingerprint)
+            ?? ExtractionTemplateService.GetPassword(_state, _game, stepOrder);
         if (password is null)
         {
             password = PromptPassword(title, archivePath, null, progress);
@@ -942,7 +965,7 @@ public partial class GameDetailWindow : Window
         progress.Hide(); IsEnabled = true;
         try
         {
-            var window = new PasswordInputWindow(title, Path.GetFileName(archivePath), existingPassword, CredentialService.GetPasswordHistory(_state)) { Owner = this };
+            var window = new PasswordInputWindow(title, Path.GetFileName(archivePath), existingPassword, CredentialService.GetPasswordHistory(_state)) { Owner = DialogOwner };
             if (window.ShowDialog() != true) return null;
             CredentialService.AddPasswordHistory(_state, window.Password);
             _save("解压密码历史已更新");

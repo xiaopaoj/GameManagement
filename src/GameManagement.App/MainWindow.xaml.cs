@@ -34,7 +34,8 @@ public partial class MainWindow : Window
     private void GameContextMenu_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel viewModel || sender is not System.Windows.Controls.MenuItem item) return;
-        viewModel.OpenSelectedGameDetails(item.Tag as string);
+        if (item.Tag is string action) viewModel.ExecuteSelectedGameAction(action);
+        else viewModel.OpenSelectedGameDetails();
     }
 
     private void GameContextMenu_Opened(object sender, RoutedEventArgs e)
@@ -66,4 +67,5 @@ public partial class MainWindow : Window
     private void BackupHistory_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenBackupManagement(); }
     private void DeleteHistory_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenDeletionHistory(); }
     private void OpenLogs_Click(object sender, RoutedEventArgs e) => ShellService.OpenFolder(AppPaths.Logs);
+    private void ExtractionTemplates_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenExtractionTemplates(); }
 }

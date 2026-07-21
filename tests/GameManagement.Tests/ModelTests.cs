@@ -72,6 +72,20 @@ public sealed class ModelTests
         Assert.Equal(DateTime.MinValue, StateStore.ResolveAddedAt(new GameItem()));
     }
 
+    [Fact]
+    public void 解压模板应加密保存并按游戏步骤读取密码()
+    {
+        var template = new ExtractionTemplateItem { Name = "渠道模板" };
+        ExtractionTemplateService.SetPasswords(template, "第一次密码", "第二次密码");
+        var game = new GameItem { ExtractionTemplateId = template.Id };
+        var state = new AppState { ExtractionTemplates = [template] };
+
+        Assert.NotEqual("第一次密码", template.EncryptedFirstPassword);
+        Assert.NotEqual("第二次密码", template.EncryptedSecondPassword);
+        Assert.Equal("第一次密码", ExtractionTemplateService.GetPassword(state, game, 1));
+        Assert.Equal("第二次密码", ExtractionTemplateService.GetPassword(state, game, 2));
+    }
+
     [Theory]
     [InlineData("示例游戏.zip", SourceKinds.ArchiveFile, "示例游戏")]
     [InlineData("示例游戏.rar", SourceKinds.ArchiveFile, "示例游戏")]
