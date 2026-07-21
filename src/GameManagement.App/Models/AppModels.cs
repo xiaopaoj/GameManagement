@@ -83,7 +83,7 @@ public sealed class GameItem
     public int? LastExitCode { get; set; }
     public long? LastRunDurationSeconds { get; set; }
     public bool HasLocalSave { get; set; }
-    public bool HasSystemSave { get; set; } = true;
+    public bool HasSystemSave { get; set; }
     public Guid? CurrentSaveGameDiskId { get; set; }
     public bool SystemSaveInitialScanCompleted { get; set; }
     public DateTime? SystemSaveInitialScanCompletedAt { get; set; }

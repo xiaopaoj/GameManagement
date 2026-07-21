@@ -27,6 +27,7 @@ public sealed class ModelTests
         Assert.NotEqual(Guid.Empty, game.Id);
         Assert.NotEqual(Guid.Empty, version.Id);
         Assert.DoesNotContain(game.Id.ToString(), character => character > 127);
+        Assert.False(game.HasSystemSave);
     }
 
     [Fact]
@@ -1012,7 +1013,7 @@ public sealed class ModelTests
         var deletedPath = Path.Combine(root, "deleted.sav");
         await File.WriteAllTextAsync(modifiedPath, "原内容");
         await File.WriteAllTextAsync(deletedPath, "待删除");
-        var game = new GameItem { DisplayName = "系统存档监控", SystemSaveInitialScanCompleted = true, CurrentVersionId = Guid.NewGuid() };
+        var game = new GameItem { DisplayName = "系统存档监控", HasSystemSave = true, SystemSaveInitialScanCompleted = true, CurrentVersionId = Guid.NewGuid() };
         var state = new AppState { Games = [game] };
         state.SystemSaveDirectories.Add(new SystemSaveDirectoryRuleItem { GameId = game.Id, Path = root, DisplayName = "测试目录" });
         try
@@ -1086,6 +1087,7 @@ public sealed class ModelTests
             PlayableRootPath = playable,
             CurrentGameDiskId = disk.Id,
             CurrentVersionId = Guid.NewGuid(),
+            HasSystemSave = true,
             SystemSaveInitialScanCompleted = true
         };
         var state = new AppState { Games = [game], GameDisks = [disk] };
