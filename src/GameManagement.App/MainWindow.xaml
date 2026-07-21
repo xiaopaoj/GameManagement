@@ -6,8 +6,6 @@
         Closing="MainWindow_Closing">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
-        <Style TargetType="Button"><Setter Property="Padding" Value="14,8"/><Setter Property="Margin" Value="4"/><Setter Property="MinWidth" Value="92"/></Style>
-        <Style TargetType="DataGrid"><Setter Property="AutoGenerateColumns" Value="False"/><Setter Property="CanUserAddRows" Value="False"/><Setter Property="IsReadOnly" Value="True"/><Setter Property="GridLinesVisibility" Value="Horizontal"/></Style>
     </Window.Resources>
     <Grid>
     <DockPanel IsEnabled="{Binding IsInterfaceEnabled}">

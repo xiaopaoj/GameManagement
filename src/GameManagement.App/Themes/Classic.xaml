@@ -10,4 +10,6 @@
     <Style TargetType="Window"><Setter Property="Background" Value="{DynamicResource AppBackgroundBrush}"/><Setter Property="TextElement.Foreground" Value="{DynamicResource PrimaryTextBrush}"/><Setter Property="FontFamily" Value="Segoe UI"/></Style>
     <Style TargetType="ContextMenu"><Setter Property="Background" Value="{DynamicResource MenuBackgroundBrush}"/><Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/><Setter Property="BorderThickness" Value="1"/></Style>
     <Style TargetType="MenuItem"><Setter Property="Padding" Value="8,5"/></Style>
+    <Style TargetType="Button"><Setter Property="Padding" Value="14,8"/><Setter Property="Margin" Value="4"/><Setter Property="MinWidth" Value="92"/></Style>
+    <Style TargetType="DataGrid"><Setter Property="AutoGenerateColumns" Value="False"/><Setter Property="CanUserAddRows" Value="False"/><Setter Property="IsReadOnly" Value="True"/><Setter Property="GridLinesVisibility" Value="Horizontal"/></Style>
 </ResourceDictionary>
