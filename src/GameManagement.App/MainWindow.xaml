@@ -39,7 +39,9 @@
                                 <MenuItem Header="存档与快照" Tag="存档与快照" Click="GameContextMenu_Click"/>
                                 <MenuItem Header="版本管理" Tag="版本管理" Click="GameContextMenu_Click"/>
                                 <MenuItem Header="解压密码管理" Tag="解压密码管理" Click="GameContextMenu_Click"/>
-                                <MenuItem Header="选择解压模板" Tag="选择解压模板" Click="GameContextMenu_Click"/>
+                                <MenuItem x:Name="ExtractionTemplateContextMenuItem" Header="选择解压模板" SubmenuOpened="ExtractionTemplateContextMenuItem_SubmenuOpened">
+                                    <MenuItem Header="正在读取模板…" IsEnabled="False"/>
+                                </MenuItem>
                                 <MenuItem Header="识别游戏目录" Tag="识别游戏目录" Click="GameContextMenu_Click"/>
                                 <MenuItem Header="重新定位原始文件" Tag="重新定位原始文件" Click="GameContextMenu_Click"/>
                                 <Separator/>

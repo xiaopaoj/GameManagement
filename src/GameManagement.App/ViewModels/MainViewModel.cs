@@ -460,6 +460,19 @@ public sealed class MainViewModel : ObservableObject
 
     public void OpenExtractionTemplates() => new ExtractionTemplateWindow(_state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();
 
+    public IReadOnlyList<ExtractionTemplateItem> ExtractionTemplates => _state.ExtractionTemplates
+        .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+        .ToList();
+
+    public void SetSelectedGameExtractionTemplate(Guid? templateId)
+    {
+        if (SelectedGame is null) { StatusMessage = "请先选择一个游戏"; return; }
+        var template = templateId is Guid id ? _state.ExtractionTemplates.FirstOrDefault(item => item.Id == id) : null;
+        if (templateId is not null && template is null) { StatusMessage = "所选解压模板不存在，请刷新后重试"; return; }
+        SelectedGame.ExtractionTemplateId = template?.Id;
+        Save(template is null ? "已取消游戏的解压流程模板" : $"已为游戏选择解压流程模板：{template.Name}");
+    }
+
     public void SetSelectedGameHasSystemSave(bool hasSystemSave)
     {
         if (SelectedGame is null) return;

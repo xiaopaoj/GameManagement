@@ -40,7 +40,40 @@ public partial class MainWindow : Window
 
     private void GameContextMenu_Opened(object sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel viewModel) SystemSaveContextMenuItem.IsChecked = viewModel.SelectedGame?.HasSystemSave == true;
+        if (DataContext is MainViewModel viewModel)
+        {
+            SystemSaveContextMenuItem.IsChecked = viewModel.SelectedGame?.HasSystemSave == true;
+            PopulateExtractionTemplateMenu(viewModel);
+        }
+    }
+
+    private void ExtractionTemplateContextMenuItem_SubmenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel) PopulateExtractionTemplateMenu(viewModel);
+    }
+
+    private void PopulateExtractionTemplateMenu(MainViewModel viewModel)
+    {
+        ExtractionTemplateContextMenuItem.Items.Clear();
+        var currentId = viewModel.SelectedGame?.ExtractionTemplateId;
+        var noneItem = new System.Windows.Controls.MenuItem { Header = "不使用模板", IsCheckable = true, IsChecked = currentId is null, Tag = Guid.Empty };
+        noneItem.Click += ExtractionTemplateMenuItem_Click;
+        ExtractionTemplateContextMenuItem.Items.Add(noneItem);
+        if (viewModel.ExtractionTemplates.Count > 0) ExtractionTemplateContextMenuItem.Items.Add(new System.Windows.Controls.Separator());
+        foreach (var template in viewModel.ExtractionTemplates)
+        {
+            var item = new System.Windows.Controls.MenuItem { Header = template.Name, IsCheckable = true, IsChecked = currentId == template.Id, Tag = template.Id };
+            item.Click += ExtractionTemplateMenuItem_Click;
+            ExtractionTemplateContextMenuItem.Items.Add(item);
+        }
+        if (viewModel.ExtractionTemplates.Count == 0)
+            ExtractionTemplateContextMenuItem.Items.Add(new System.Windows.Controls.MenuItem { Header = "暂无可用模板，请在设置中创建", IsEnabled = false });
+    }
+
+    private void ExtractionTemplateMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel && sender is System.Windows.Controls.MenuItem { Tag: Guid templateId })
+            viewModel.SetSelectedGameExtractionTemplate(templateId == Guid.Empty ? null : templateId);
     }
 
     private void SystemSaveContextMenuItem_Click(object sender, RoutedEventArgs e)
