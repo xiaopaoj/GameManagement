@@ -442,7 +442,7 @@ public sealed class MainViewModel : ObservableObject
     public void ExecuteSelectedGameAction(string action)
     {
         if (SelectedGame is null) { StatusMessage = "请先选择一个游戏"; return; }
-        var actionHost = new GameDetailWindow(SelectedGame, _state, message => Save(message), OnGameStateChanged, directActionHost: true)
+        var actionHost = new GameDetailWindow(SelectedGame, _state, SaveAndRefreshGameLibrary, OnGameStateChanged, directActionHost: true)
         {
             Owner = Application.Current.MainWindow
         };
@@ -476,7 +476,7 @@ public sealed class MainViewModel : ObservableObject
         var template = templateId is Guid id ? _state.ExtractionTemplates.FirstOrDefault(item => item.Id == id) : null;
         if (templateId is not null && template is null) { StatusMessage = "所选解压模板不存在，请刷新后重试"; return; }
         SelectedGame.ExtractionTemplateId = template?.Id;
-        Save(template is null ? "已取消游戏的解压流程模板" : $"已为游戏选择解压流程模板：{template.Name}");
+        SaveAndRefreshGameLibrary(template is null ? "已取消游戏的解压流程模板" : $"已为游戏选择解压流程模板：{template.Name}");
     }
 
     public void SetSelectedGameHasSystemSave(bool hasSystemSave)
@@ -488,7 +488,19 @@ public sealed class MainViewModel : ObservableObject
             SystemSaveMonitoringService.CancelLatestSession(_state, SelectedGame, "已关闭系统存档扫描");
             _state.SaveCandidates.RemoveAll(item => item.GameId == SelectedGame.Id && item.SourceKind == "系统目录" && item.Decision == SaveCandidateDecisions.Pending);
         }
-        Save(hasSystemSave ? "已启用该游戏的系统存档扫描" : "已标记该游戏不存在系统存档，后续不再扫描系统目录");
+        SaveAndRefreshGameLibrary(hasSystemSave ? "已启用该游戏的系统存档扫描" : "已标记该游戏不存在系统存档，后续不再扫描系统目录");
+    }
+
+    private void SaveAndRefreshGameLibrary(string message)
+    {
+        _store.Save(_state);
+        StatusMessage = message;
+        AppLogger.Info(message);
+
+        var existingIds = _state.Games.Select(game => game.Id).ToHashSet();
+        foreach (var removed in Games.Where(game => !existingIds.Contains(game.Id)).ToList()) Games.Remove(removed);
+        foreach (var added in SortGames(_state.Games).Where(game => Games.All(existing => existing.Id != game.Id))) Games.Add(added);
+        if (SelectedGame is not null && !existingIds.Contains(SelectedGame.Id)) SelectedGame = null;
         CollectionViewSource.GetDefaultView(Games).Refresh();
     }
 

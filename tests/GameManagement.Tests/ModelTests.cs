@@ -773,6 +773,8 @@ public sealed class ModelTests
 
         var mainViewModelSource = File.ReadAllText(Path.Combine(appRoot, "ViewModels", "MainViewModel.cs"));
         Assert.Contains("directActionHost: true", mainViewModelSource);
+        Assert.Contains("SaveAndRefreshGameLibrary", mainViewModelSource);
+        Assert.Contains("CollectionViewSource.GetDefaultView(Games).Refresh();", mainViewModelSource);
         Assert.DoesNotContain("actionHost.Show()", mainViewModelSource);
     }
 
