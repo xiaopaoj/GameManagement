@@ -12,6 +12,11 @@ public sealed record SystemMonitorProgress(int FileCount, string CurrentPath);
 public static class SystemSaveMonitoringService
 {
     private static readonly JsonSerializerOptions JsonOptions = new();
+    private static readonly HashSet<string> InitialScanExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Microsoft", "Tencent", "AMD", "NVIDIA", "NVIDIA Corporation", "Adobe", "Google", "Mozilla", "Discord", "Temp", "CrashDumps", "ConnectedDevicesPlatform"
+    };
+    private static readonly HashSet<string> GenericMatchTerms = new(StringComparer.OrdinalIgnoreCase) { "game", "games", "launcher", "launch", "start", "client", "win64", "x64" };
 
     public static IReadOnlyList<string> GetCommonDirectories()
     {
@@ -20,6 +25,7 @@ public static class SystemSaveMonitoringService
         {
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Path.Combine(Directory.GetParent(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData))?.FullName ?? string.Empty, "LocalLow"),
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             Path.Combine(userProfile, "Saved Games")
         }.Where(path => !string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
@@ -48,7 +54,7 @@ public static class SystemSaveMonitoringService
             SnapshotFilePath = Path.Combine(AppPaths.Data, "cache", "system-monitor", $"{game.Id:N}-{Guid.NewGuid():N}.json.gz")
         };
         Directory.CreateDirectory(Path.GetDirectoryName(session.SnapshotFilePath)!);
-        var snapshot = await CaptureAsync(directories, progress, token);
+        var snapshot = await CaptureAsync(directories, progress, token, isInitial);
         await WriteSnapshotAsync(session.SnapshotFilePath, snapshot, token);
         state.SystemMonitorSessions.Add(session);
         return session;
@@ -64,7 +70,7 @@ public static class SystemSaveMonitoringService
         var session = state.SystemMonitorSessions.Where(item => item.GameId == game.Id && item.Status == "监控中").OrderByDescending(item => item.StartedAt).FirstOrDefault();
         if (session is null || !File.Exists(session.SnapshotFilePath)) return [];
         var before = await ReadSnapshotAsync(session.SnapshotFilePath, token);
-        var after = await CaptureAsync(session.DirectoryPaths.Where(Directory.Exists).ToList(), progress, token);
+        var after = await CaptureAsync(session.DirectoryPaths.Where(Directory.Exists).ToList(), progress, token, session.IsInitialCommonScan);
         var result = await CompareAsync(state, game, snapshotKind, session.IsInitialCommonScan, before, after, token);
         session.Status = "已完成"; session.CompletedAt = DateTime.Now;
         foreach (var rule in state.SystemSaveDirectories.Where(item => item.GameId == game.Id && session.DirectoryPaths.Contains(item.Path, StringComparer.OrdinalIgnoreCase))) rule.LastScannedAt = DateTime.Now;
@@ -107,20 +113,14 @@ public static class SystemSaveMonitoringService
     public static bool IsSharedDirectory(AppState state, string path) => state.SystemSaveDirectories
         .Where(item => item.Enabled && PathsEqual(item.Path, path)).Select(item => item.GameId).Distinct().Count() > 1;
 
-    private static Task<List<SystemFileSnapshotItem>> CaptureAsync(IReadOnlyCollection<string> roots, IProgress<SystemMonitorProgress>? progress, CancellationToken token) => Task.Run(() =>
+    private static Task<List<SystemFileSnapshotItem>> CaptureAsync(IReadOnlyCollection<string> roots, IProgress<SystemMonitorProgress>? progress, CancellationToken token, bool applyInitialExclusions) => Task.Run(() =>
     {
         var result = new List<SystemFileSnapshotItem>();
         var count = 0;
         foreach (var root in roots)
         {
             token.ThrowIfCancellationRequested();
-            IEnumerable<string> files;
-            try
-            {
-                files = Directory.EnumerateFiles(root, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint });
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { AppLogger.Error($"系统存档目录扫描失败：{root}", ex); continue; }
-            foreach (var file in files)
+            foreach (var file in EnumerateFiles(root, applyInitialExclusions, token))
             {
                 token.ThrowIfCancellationRequested();
                 try
@@ -153,6 +153,7 @@ public static class SystemSaveMonitoringService
         foreach (var item in normalizedBefore.Where(item => !afterMap.ContainsKey(item.FullPath))) changed.Add((item, "删除"));
 
         var result = new List<SaveCandidateItem>();
+        var matchTerms = BuildGameMatchTerms(game);
         foreach (var change in changed.OrderBy(item => item.Item.FullPath, StringComparer.CurrentCultureIgnoreCase))
         {
             token.ThrowIfCancellationRequested();
@@ -163,6 +164,9 @@ public static class SystemSaveMonitoringService
             var confirmed = state.SaveFileRules.Any(item => item.GameId == game.Id && item.SourceKind == "系统目录" && PathsEqual(item.SourceRootPath, sourceRoot) && item.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase));
             var excluded = state.SaveFileExclusions.Any(item => item.GameId == game.Id && item.SourceKind == "系统目录" && PathsEqual(item.SourceRootPath, sourceRoot) && item.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase));
             var shared = IsSharedDirectory(state, sourceRoot);
+            var candidateDirectory = Path.GetDirectoryName(fullPath) ?? sourceRoot;
+            var inNewDirectory = !normalizedBefore.Any(item => IsWithinDirectory(candidateDirectory, item.FullPath));
+            var (matchScore, matchReason) = ScoreSystemPath(fullPath, matchTerms, inNewDirectory);
             var reasons = new List<string>();
             if (!confirmed && change.Item.FileSize >= SaveChangeDetectionService.LargeFileThreshold) reasons.Add("文件大于或等于 100 MB");
             if (shared) reasons.Add("共享目录中的文件需要再次确认归属");
@@ -187,10 +191,81 @@ public static class SystemSaveMonitoringService
                 Decision = excluded ? SaveCandidateDecisions.Excluded : SaveCandidateDecisions.Pending,
                 SnapshotKind = snapshotKind,
                 PreviouslyConfirmed = confirmed,
-                SharedDirectory = shared
+                SharedDirectory = shared,
+                SystemMatchScore = matchScore,
+                SystemMatchReason = matchReason,
+                InNewDirectory = inNewDirectory
             });
         }
-        return result;
+        return result.OrderByDescending(item => item.PreviouslyConfirmed)
+            .ThenByDescending(item => item.SystemMatchScore)
+            .ThenByDescending(item => item.InNewDirectory)
+            .ThenByDescending(item => item.ModifiedAt)
+            .ThenBy(item => item.SourcePath, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+    }
+
+    private static IEnumerable<string> EnumerateFiles(string root, bool applyInitialExclusions, CancellationToken token)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            token.ThrowIfCancellationRequested();
+            var directory = pending.Pop();
+            string[] files;
+            string[] directories;
+            try
+            {
+                files = Directory.GetFiles(directory);
+                directories = Directory.GetDirectories(directory);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+            foreach (var file in files) yield return file;
+            foreach (var child in directories.OrderByDescending(path => path, StringComparer.CurrentCultureIgnoreCase))
+            {
+                if (applyInitialExclusions && ShouldExcludeInitialDirectory(child)) continue;
+                try { if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) != 0) continue; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+                pending.Push(child);
+            }
+        }
+    }
+
+    internal static IReadOnlyList<string> BuildGameMatchTerms(GameItem game)
+    {
+        var values = new[]
+        {
+            game.DisplayName,
+            game.Note,
+            Path.GetFileNameWithoutExtension(game.ExecutableRelativePath),
+            Path.GetFileNameWithoutExtension(game.Versions.FirstOrDefault(item => item.Id == game.CurrentVersionId)?.ExecutableRelativePath),
+            string.IsNullOrWhiteSpace(game.PlayableRootPath) ? null : Path.GetFileName(game.PlayableRootPath)
+        };
+        return values.Where(value => !string.IsNullOrWhiteSpace(value))
+            .SelectMany(value => new[] { Compact(value!) }.Concat(value!.Split(new[] { ' ', '_', '-', '.', '[', ']', '(', ')' }, StringSplitOptions.RemoveEmptyEntries).Select(Compact)))
+            .Where(value => value.Length >= 3 && !GenericMatchTerms.Contains(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    internal static bool ShouldExcludeInitialDirectory(string path) => InitialScanExcludedDirectories.Contains(Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)));
+
+    internal static (int Score, string Reason) ScoreSystemPath(string path, IReadOnlyCollection<string> matchTerms, bool inNewDirectory)
+    {
+        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Select(Compact).Where(value => value.Length >= 3).ToList();
+        var matches = matchTerms.Where(term => segments.Any(segment => segment.Contains(term, StringComparison.OrdinalIgnoreCase) || term.Contains(segment, StringComparison.OrdinalIgnoreCase))).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var score = (inNewDirectory ? 100 : 0) + matches.Count * 50;
+        var reasons = new List<string>();
+        if (inNewDirectory) reasons.Add("游戏运行期间新建目录");
+        if (matches.Count > 0) reasons.Add($"路径匹配游戏/EXE：{string.Join("、", matches)}");
+        return (score, string.Join("；", reasons));
+    }
+
+    private static string Compact(string value) => new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+    private static bool IsWithinDirectory(string directory, string path)
+    {
+        var root = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(path).StartsWith(root, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task WriteSnapshotAsync(string path, List<SystemFileSnapshotItem> snapshot, CancellationToken token)

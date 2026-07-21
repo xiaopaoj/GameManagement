@@ -1041,6 +1041,29 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 系统存档初扫应排除明显第三方目录并保留游戏目录()
+    {
+        Assert.True(SystemSaveMonitoringService.ShouldExcludeInitialDirectory(Path.Combine("AppData", "LocalLow", "Microsoft")));
+        Assert.True(SystemSaveMonitoringService.ShouldExcludeInitialDirectory(Path.Combine("AppData", "Local", "Tencent")));
+        Assert.True(SystemSaveMonitoringService.ShouldExcludeInitialDirectory(Path.Combine("AppData", "Local", "AMD")));
+        Assert.False(SystemSaveMonitoringService.ShouldExcludeInitialDirectory(Path.Combine("AppData", "LocalLow", "Hizure")));
+    }
+
+    [Fact]
+    public void 系统存档候选应优先新目录和游戏名称或EXE匹配路径()
+    {
+        var game = new GameItem { DisplayName = "NTR Soccer", ExecutableRelativePath = "NTR_Soccer.exe" };
+        var terms = SystemSaveMonitoringService.BuildGameMatchTerms(game);
+
+        var matched = SystemSaveMonitoringService.ScoreSystemPath(Path.Combine("LocalLow", "Hizure", "NTR_Soccer", "save.dat"), terms, true);
+        var unrelated = SystemSaveMonitoringService.ScoreSystemPath(Path.Combine("LocalLow", "OtherVendor", "cache.dat"), terms, false);
+
+        Assert.True(matched.Score > unrelated.Score);
+        Assert.Contains("新建目录", matched.Reason);
+        Assert.Contains("路径匹配", matched.Reason);
+    }
+
+    [Fact]
     public async Task 首次系统扫描应以文件父目录为监控根目录且保留共享确认要求()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

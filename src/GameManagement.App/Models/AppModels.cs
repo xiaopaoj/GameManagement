@@ -232,6 +232,9 @@ public sealed class SaveCandidateItem
     public bool PreviouslyConfirmed { get; set; }
     public bool SharedDirectory { get; set; }
     public string ExclusionReason { get; set; } = string.Empty;
+    public int SystemMatchScore { get; set; }
+    public string SystemMatchReason { get; set; } = string.Empty;
+    public bool InNewDirectory { get; set; }
     public string Decision { get; set; } = SaveCandidateDecisions.Pending;
     public string SnapshotKind { get; set; } = SaveSnapshotKinds.Normal;
     public DateTime DetectedAt { get; set; } = DateTime.Now;
@@ -239,6 +242,7 @@ public sealed class SaveCandidateItem
     [JsonIgnore] public string DefaultExcludedText => DefaultExcluded ? ExclusionReason : "否";
     [JsonIgnore] public string PreviouslyConfirmedText => PreviouslyConfirmed ? "是" : "否";
     [JsonIgnore] public string SharedDirectoryText => SharedDirectory ? "是，需再次确认" : "否";
+    [JsonIgnore] public string SystemMatchText => SourceKind == "系统目录" ? (string.IsNullOrWhiteSpace(SystemMatchReason) ? "普通变化" : SystemMatchReason) : "不适用";
     [JsonIgnore] public bool SourceExists => File.Exists(SourcePath);
 }
 

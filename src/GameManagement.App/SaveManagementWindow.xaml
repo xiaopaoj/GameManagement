@@ -24,6 +24,7 @@
                             <DataGridTextColumn Header="处理状态" Binding="{Binding Decision}" Width="80"/>
                             <DataGridTextColumn Header="已确认规则" Binding="{Binding PreviouslyConfirmedText}" Width="85"/>
                             <DataGridTextColumn Header="共享目录" Binding="{Binding SharedDirectoryText}" Width="110"/>
+                            <DataGridTextColumn Header="匹配提示" Binding="{Binding SystemMatchText}" Width="220"/>
                             <DataGridTextColumn Header="快照类型" Binding="{Binding SnapshotKind}" Width="80"/>
                             <DataGridTextColumn Header="文件" Binding="{Binding RelativePath}" Width="3*"/>
                             <DataGridTextColumn Header="大小" Binding="{Binding FileSizeText}" Width="95"/>
