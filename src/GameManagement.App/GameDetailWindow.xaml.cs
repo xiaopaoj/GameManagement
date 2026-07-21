@@ -638,8 +638,17 @@ public partial class GameDetailWindow : Window
         _state.OperationTasks.Add(task); _game.Status = "归档中"; _save("普通归档任务已创建"); RefreshBindings();
         try
         {
+            if (!EnsureSystemSaveDirectoryForArchive())
+            {
+                task.Status = "已取消"; task.Message = "用户取消选择系统存档目录"; task.CompletedAt = DateTime.Now;
+                _game.Status = "可游玩"; _save(task.Message); RefreshBindings(); return false;
+            }
             var candidates = await SaveChangeDetectionService.DetectAsync(_state, _game, SaveSnapshotKinds.Normal);
             SaveChangeDetectionService.ReplaceDetectedCandidates(_state, _game, candidates);
+            var systemCandidates = _game.HasSystemSave
+                ? await SystemSaveMonitoringService.CollectDirectoryCandidatesAsync(_state, _game, SaveSnapshotKinds.Normal)
+                : [];
+            SystemSaveMonitoringService.ReplaceDetectedCandidates(_state, _game, systemCandidates);
             var automatic = candidates.Where(item => item.PreviouslyConfirmed && item.ChangeType != "删除" && item.Decision == SaveCandidateDecisions.Pending).Select(item => item.Id).ToList();
             if (automatic.Count > 0) await SaveSnapshotService.ApplyAndCreateAsync(_state, _game, automatic);
             _save("普通归档前游戏目录存档扫描完成");
@@ -697,6 +706,27 @@ public partial class GameDetailWindow : Window
             task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now;
             _game.Status = "操作失败"; _save("普通归档失败"); RefreshBindings(); AppLogger.Error($"普通归档失败：{_game.DisplayName}", ex); ShowError(ex.Message); return false;
         }
+    }
+
+    private bool EnsureSystemSaveDirectoryForArchive()
+    {
+        if (!_game.HasSystemSave) return true;
+        if (_state.SystemSaveDirectories.Any(item => item.GameId == _game.Id && item.Enabled && Directory.Exists(item.Path)))
+        {
+            if (!_game.SystemSaveInitialScanCompleted) SystemSaveMonitoringService.MarkInitialScanCompleted(_game);
+            return true;
+        }
+        var answer = MessageBox.Show(DialogOwner,
+            "首次自动匹配没有找到系统存档目录。该游戏是否存在 Windows 系统目录存档？\n\n选择“是”后请人工选择存档文件夹；选择“否”将只处理游戏目录存档。",
+            "确认系统存档", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+        if (answer == MessageBoxResult.Cancel) return false;
+        if (answer == MessageBoxResult.No) { SystemSaveMonitoringService.MarkInitialScanCompleted(_game); return true; }
+        var dialog = new OpenFolderDialog { Title = "选择该游戏的系统存档文件夹", Multiselect = false };
+        if (dialog.ShowDialog(DialogOwner) != true) return false;
+        SystemSaveMonitoringService.EnsureDirectoryRule(_state, _game, dialog.FolderName, false);
+        SystemSaveMonitoringService.MarkInitialScanCompleted(_game);
+        _save("已人工设置系统存档目录，归档时将显示目录树供选择");
+        return true;
     }
 
     private async Task<string> BuildSpecialCleanDirectoryAsync(GameVersionItem version, string workRoot, OperationTaskItem task, PreparationProgressWindow progress, CancellationToken token)

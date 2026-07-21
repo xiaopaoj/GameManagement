@@ -246,6 +246,39 @@ public sealed class SaveCandidateItem
     [JsonIgnore] public bool SourceExists => File.Exists(SourcePath);
 }
 
+public sealed class SaveCandidateTreeNode : INotifyPropertyChanged
+{
+    private bool? _isChecked;
+    public string Name { get; set; } = string.Empty;
+    public string Detail { get; set; } = string.Empty;
+    public SaveCandidateItem? Candidate { get; set; }
+    public SaveCandidateTreeNode? Parent { get; set; }
+    public List<SaveCandidateTreeNode> Children { get; set; } = [];
+    [JsonIgnore]
+    public bool? IsChecked
+    {
+        get => _isChecked;
+        set => SetChecked(value, true, true);
+    }
+    [JsonIgnore] public bool IsFolder => Candidate is null;
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void SetChecked(bool? value, bool updateChildren, bool updateParent)
+    {
+        if (_isChecked == value && !updateChildren) return;
+        _isChecked = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsChecked)));
+        if (updateChildren && value.HasValue) foreach (var child in Children) child.SetChecked(value, true, false);
+        if (updateParent) Parent?.RefreshFromChildren();
+    }
+
+    private void RefreshFromChildren()
+    {
+        bool? value = Children.All(item => item.IsChecked == true) ? true : Children.All(item => item.IsChecked == false) ? false : null;
+        SetChecked(value, false, true);
+    }
+}
+
 public sealed class SaveSnapshotItem
 {
     public Guid Id { get; set; } = Guid.NewGuid();

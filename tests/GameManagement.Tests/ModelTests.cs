@@ -1007,7 +1007,7 @@ public sealed class ModelTests
     }
 
     [Fact]
-    public async Task 系统存档监控应检测新增修改删除并清理扫描缓存()
+    public async Task 已定位系统存档目录应等待归档时统一扫描文件()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -1021,21 +1021,22 @@ public sealed class ModelTests
         try
         {
             var session = await SystemSaveMonitoringService.BeginSessionAsync(state, game);
-            Assert.NotNull(session);
-            Assert.True(File.Exists(session!.SnapshotFilePath));
+            Assert.Null(session);
 
             await File.WriteAllTextAsync(modifiedPath, "修改后的内容更长");
             File.Delete(deletedPath);
             await File.WriteAllTextAsync(Path.Combine(root, "created.sav"), "新增内容");
+            var hiddenPath = Path.Combine(root, "hidden.sav");
+            await File.WriteAllTextAsync(hiddenPath, "隐藏内容");
+            File.SetAttributes(hiddenPath, File.GetAttributes(hiddenPath) | FileAttributes.Hidden);
 
-            var candidates = await SystemSaveMonitoringService.CompleteSessionAsync(state, game, SaveSnapshotKinds.Normal);
+            var candidates = await SystemSaveMonitoringService.CollectDirectoryCandidatesAsync(state, game, SaveSnapshotKinds.Normal);
 
-            Assert.Contains(candidates, item => item.RelativePath == "modified.sav" && item.ChangeType == "修改");
-            Assert.Contains(candidates, item => item.RelativePath == "deleted.sav" && item.ChangeType == "删除");
+            Assert.Contains(candidates, item => item.RelativePath == "modified.sav" && item.ChangeType == "新增");
+            Assert.DoesNotContain(candidates, item => item.RelativePath == "deleted.sav");
             Assert.Contains(candidates, item => item.RelativePath == "created.sav" && item.ChangeType == "新增");
+            Assert.DoesNotContain(candidates, item => item.RelativePath == "hidden.sav");
             Assert.All(candidates, item => Assert.Equal(root, item.SourceRootPath, ignoreCase: true));
-            Assert.Equal("已完成", session.Status);
-            Assert.False(File.Exists(session.SnapshotFilePath));
         }
         finally { Directory.Delete(root, true); }
     }
@@ -1061,6 +1062,41 @@ public sealed class ModelTests
         Assert.True(matched.Score > unrelated.Score);
         Assert.Contains("新建目录", matched.Reason);
         Assert.Contains("路径匹配", matched.Reason);
+    }
+
+    [Fact]
+    public void 首次系统扫描应只定位与游戏名称匹配的新目录()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "LocalLow");
+        var matched = Path.Combine(root, "Hizure", "NTR_Soccer", "save.dat");
+        var unrelated = Path.Combine(root, "OtherVendor", "cache.dat");
+        var game = new GameItem { DisplayName = "NTR Soccer", ExecutableRelativePath = "NTR_Soccer.exe" };
+
+        var directory = SystemSaveMonitoringService.DiscoverInitialSaveDirectory(game, [],
+        [
+            new SystemFileSnapshotItem { FullPath = unrelated, RootPath = root },
+            new SystemFileSnapshotItem { FullPath = matched, RootPath = root }
+        ]);
+
+        Assert.Equal(Path.GetDirectoryName(matched), directory, ignoreCase: true);
+    }
+
+    [Fact]
+    public void 存档树勾选文件夹应同步选择全部下级文件()
+    {
+        var root = new SaveCandidateTreeNode { Name = "存档目录" };
+        var child = new SaveCandidateTreeNode { Name = "子目录", Parent = root };
+        var first = new SaveCandidateTreeNode { Name = "slot1.sav", Parent = child, Candidate = new SaveCandidateItem() };
+        var second = new SaveCandidateTreeNode { Name = "slot2.sav", Parent = child, Candidate = new SaveCandidateItem() };
+        child.Children.AddRange([first, second]);
+        root.Children.Add(child);
+
+        root.IsChecked = true;
+
+        Assert.True(first.IsChecked);
+        Assert.True(second.IsChecked);
+        second.IsChecked = false;
+        Assert.Null(root.IsChecked);
     }
 
     [Fact]
@@ -1119,10 +1155,9 @@ public sealed class ModelTests
         state.SystemSaveDirectories.Add(new SystemSaveDirectoryRuleItem { GameId = game.Id, Path = systemRoot, DisplayName = "系统存档" });
         try
         {
-            await SystemSaveMonitoringService.BeginSessionAsync(state, game);
             var source = Path.Combine(systemRoot, "slot1.sav");
             await File.WriteAllTextAsync(source, "第一槽存档");
-            var candidates = await SystemSaveMonitoringService.CompleteSessionAsync(state, game, SaveSnapshotKinds.Normal);
+            var candidates = await SystemSaveMonitoringService.CollectDirectoryCandidatesAsync(state, game, SaveSnapshotKinds.Normal);
             SystemSaveMonitoringService.ReplaceDetectedCandidates(state, game, candidates);
             var candidate = Assert.Single(candidates);
 

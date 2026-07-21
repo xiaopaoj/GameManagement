@@ -40,7 +40,7 @@ public partial class SaveManagementWindow : Window
     }
 
     private GameItem? SelectedGame => (GameCombo.SelectedItem as ChoiceItem)?.Value as GameItem;
-    private SaveCandidateItem? SelectedCandidate => CandidateGrid.SelectedItem as SaveCandidateItem;
+    private SaveCandidateItem? SelectedCandidate => (CandidateTree.SelectedItem as SaveCandidateTreeNode)?.Candidate;
     private SaveSnapshotItem? SelectedSnapshot => SnapshotGrid.SelectedItem as SaveSnapshotItem;
 
     private void RefreshLists()
@@ -50,7 +50,7 @@ public partial class SaveManagementWindow : Window
         var candidates = _state.SaveCandidates.AsEnumerable();
         if (game is not null) candidates = candidates.Where(item => item.GameId == game.Id);
         if (decision != "全部") candidates = candidates.Where(item => item.Decision == decision);
-        CandidateGrid.ItemsSource = candidates.OrderByDescending(item => item.DetectedAt).ThenBy(item => item.RelativePath).ToList();
+        CandidateTree.ItemsSource = BuildCandidateTree(candidates.OrderByDescending(item => item.DetectedAt).ThenBy(item => item.RelativePath));
 
         var snapshotKind = SnapshotKindCombo.SelectedItem as string ?? "全部";
         var snapshots = _state.SaveSnapshots.AsEnumerable();
@@ -94,7 +94,7 @@ public partial class SaveManagementWindow : Window
 
     private async void ConfirmCandidates_Click(object sender, RoutedEventArgs e)
     {
-        var selected = CandidateGrid.SelectedItems.OfType<SaveCandidateItem>().Where(item => item.Decision == SaveCandidateDecisions.Pending).ToList();
+        var selected = GetCheckedCandidates().Where(item => item.Decision == SaveCandidateDecisions.Pending).ToList();
         if (selected.Count == 0) { ShowError("请选择至少一个待确认候选。 "); return; }
         if (selected.Select(item => item.GameId).Distinct().Count() != 1) { ShowError("一次只能确认同一个游戏的候选文件。 "); return; }
         if (selected.Select(item => item.SnapshotKind).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1) { ShowError("一次只能确认同一种正常或异常快照候选。 "); return; }
@@ -119,7 +119,7 @@ public partial class SaveManagementWindow : Window
 
     private void ExcludeCandidates_Click(object sender, RoutedEventArgs e)
     {
-        var selected = CandidateGrid.SelectedItems.OfType<SaveCandidateItem>().Where(item => item.Decision == SaveCandidateDecisions.Pending).ToList();
+        var selected = GetCheckedCandidates().Where(item => item.Decision == SaveCandidateDecisions.Pending).ToList();
         if (selected.Count == 0) { ShowError("请选择至少一个待确认候选。 "); return; }
         if (selected.Select(item => item.GameId).Distinct().Count() != 1) { ShowError("一次只能排除同一个游戏的候选文件。 "); return; }
         var game = _state.Games.First(item => item.Id == selected[0].GameId);
@@ -143,7 +143,41 @@ public partial class SaveManagementWindow : Window
         new FilePreviewWindow(SelectedCandidate.SourcePath) { Owner = this }.ShowDialog();
     }
 
-    private void CandidateGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => PreviewCandidate_Click(sender, e);
+    private void CandidateTree_MouseDoubleClick(object sender, MouseButtonEventArgs e) => PreviewCandidate_Click(sender, e);
+
+    private IReadOnlyList<SaveCandidateItem> GetCheckedCandidates() => Flatten(CandidateTree.ItemsSource?.Cast<SaveCandidateTreeNode>() ?? []).Where(item => item.IsChecked == true && item.Candidate is not null).Select(item => item.Candidate!).ToList();
+
+    private static List<SaveCandidateTreeNode> BuildCandidateTree(IEnumerable<SaveCandidateItem> candidates)
+    {
+        var roots = new List<SaveCandidateTreeNode>();
+        foreach (var candidate in candidates)
+        {
+            var rootName = string.IsNullOrWhiteSpace(candidate.SourceRootPath) ? candidate.GameName : candidate.SourceRootPath;
+            var root = roots.FirstOrDefault(item => item.Name.Equals(rootName, StringComparison.OrdinalIgnoreCase));
+            if (root is null) { root = new SaveCandidateTreeNode { Name = rootName, Detail = candidate.SourceKind }; roots.Add(root); }
+            var parent = root;
+            var parts = candidate.RelativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts.Take(Math.Max(0, parts.Length - 1)))
+            {
+                var child = parent.Children.FirstOrDefault(item => item.IsFolder && item.Name.Equals(part, StringComparison.OrdinalIgnoreCase));
+                if (child is null) { child = new SaveCandidateTreeNode { Name = part, Parent = parent }; parent.Children.Add(child); }
+                parent = child;
+            }
+            parent.Children.Add(new SaveCandidateTreeNode
+            {
+                Name = parts.LastOrDefault() ?? candidate.RelativePath,
+                Detail = $"{candidate.ChangeType}｜{candidate.Decision}｜{candidate.FileSizeText}｜{candidate.SystemMatchText}",
+                Candidate = candidate,
+                Parent = parent
+            });
+        }
+        return roots;
+    }
+
+    private static IEnumerable<SaveCandidateTreeNode> Flatten(IEnumerable<SaveCandidateTreeNode> nodes)
+    {
+        foreach (var node in nodes) { yield return node; foreach (var child in Flatten(node.Children)) yield return child; }
+    }
 
     private void LocateCandidate_Click(object sender, RoutedEventArgs e)
     {

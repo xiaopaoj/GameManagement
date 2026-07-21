@@ -377,8 +377,10 @@ public sealed class MainViewModel : ObservableObject
             task.Status = "完成"; task.Progress = 100; task.Message = automaticResult?.ContentChanged == true ? $"发现 {candidates.Count} 个变化，已自动创建{kind}快照" : $"发现 {candidates.Count} 个游戏及系统目录变化"; task.CompletedAt = DateTime.Now;
             _store.Save(_state);
             var pendingCount = candidates.Count(item => item.Decision == SaveCandidateDecisions.Pending);
-            StatusMessage = pendingCount == 0 ? "游戏退出后未发现需要确认的存档变化" : $"发现 {pendingCount} 个待确认存档候选";
-            if (pendingCount > 0 || wasInitialSystemScan)
+            StatusMessage = wasInitialSystemScan
+                ? (_state.SystemSaveDirectories.Any(item => item.GameId == game.Id) ? "首次系统存档目录定位完成，已保存匹配目录" : "首次系统存档目录未匹配，归档时将询问")
+                : pendingCount == 0 ? "游戏退出后未发现需要确认的存档变化" : $"发现 {pendingCount} 个待确认存档候选";
+            if (pendingCount > 0)
             {
                 var owner = Application.Current.Windows.OfType<Window>().FirstOrDefault(window => window.IsActive) ?? Application.Current.MainWindow;
                 var window = new SaveManagementWindow(_state, message => Save(message), game) { Owner = owner };

@@ -17,7 +17,7 @@ public partial class MainWindow : Window
 
     private void GameGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (DataContext is MainViewModel viewModel) viewModel.OpenSelectedGameDetails();
+        if (DataContext is MainViewModel viewModel && viewModel.LaunchGameCommand.CanExecute(null)) viewModel.LaunchGameCommand.Execute(null);
     }
 
     private void GameGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)

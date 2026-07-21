@@ -36,6 +36,7 @@ public static class SystemSaveMonitoringService
     {
         if (!game.HasSystemSave) return null;
         var isInitial = !game.SystemSaveInitialScanCompleted;
+        if (!isInitial) return null;
         var directories = isInitial
             ? GetCommonDirectories().ToList()
             : state.SystemSaveDirectories.Where(item => item.GameId == game.Id && item.Enabled && Directory.Exists(item.Path)).Select(item => Path.GetFullPath(item.Path)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -71,6 +72,16 @@ public static class SystemSaveMonitoringService
         if (session is null || !File.Exists(session.SnapshotFilePath)) return [];
         var before = await ReadSnapshotAsync(session.SnapshotFilePath, token);
         var after = await CaptureAsync(session.DirectoryPaths.Where(Directory.Exists).ToList(), progress, token, session.IsInitialCommonScan);
+        if (session.IsInitialCommonScan)
+        {
+            var directory = DiscoverInitialSaveDirectory(game, before, after);
+            if (directory is not null) EnsureDirectoryRule(state, game, directory, true);
+            MarkInitialScanCompleted(game);
+            session.Status = directory is null ? "已完成，未定位存档目录" : "已完成，已定位存档目录";
+            session.CompletedAt = DateTime.Now;
+            TryDeleteSnapshotFile(session.SnapshotFilePath);
+            return [];
+        }
         var result = await CompareAsync(state, game, snapshotKind, session.IsInitialCommonScan, before, after, token);
         session.Status = "已完成"; session.CompletedAt = DateTime.Now;
         foreach (var rule in state.SystemSaveDirectories.Where(item => item.GameId == game.Id && session.DirectoryPaths.Contains(item.Path, StringComparer.OrdinalIgnoreCase))) rule.LastScannedAt = DateTime.Now;
@@ -112,6 +123,49 @@ public static class SystemSaveMonitoringService
 
     public static bool IsSharedDirectory(AppState state, string path) => state.SystemSaveDirectories
         .Where(item => item.Enabled && PathsEqual(item.Path, path)).Select(item => item.GameId).Distinct().Count() > 1;
+
+    internal static string? DiscoverInitialSaveDirectory(GameItem game, IReadOnlyCollection<SystemFileSnapshotItem> before, IReadOnlyCollection<SystemFileSnapshotItem> after)
+    {
+        var beforePaths = before.Select(item => item.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var terms = BuildGameMatchTerms(game);
+        return after.Where(item => !beforePaths.Contains(item.FullPath) && !IsHidden(item.FullPath))
+            .Select(item =>
+            {
+                var directory = Path.GetDirectoryName(item.FullPath)!;
+                var inNewDirectory = !before.Any(previous => IsWithinDirectory(directory, previous.FullPath));
+                var match = ScoreSystemPath(item.FullPath, terms, inNewDirectory);
+                return new { Directory = directory, match.Score, match.Reason };
+            })
+            .Where(item => item.Reason.Contains("路径匹配", StringComparison.Ordinal))
+            .GroupBy(item => item.Directory, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new { Directory = group.Key, Score = group.Max(item => item.Score), Count = group.Count() })
+            .OrderByDescending(item => item.Score).ThenByDescending(item => item.Count).ThenBy(item => item.Directory, StringComparer.CurrentCultureIgnoreCase)
+            .Select(item => item.Directory).FirstOrDefault();
+    }
+
+    public static async Task<List<SaveCandidateItem>> CollectDirectoryCandidatesAsync(AppState state, GameItem game, string snapshotKind, CancellationToken token = default)
+    {
+        var result = new List<SaveCandidateItem>();
+        foreach (var rule in state.SystemSaveDirectories.Where(item => item.GameId == game.Id && item.Enabled && Directory.Exists(item.Path)))
+        {
+            foreach (var file in EnumerateFiles(rule.Path, false, token))
+            {
+                token.ThrowIfCancellationRequested();
+                var info = new FileInfo(file);
+                var relative = Path.GetRelativePath(rule.Path, file);
+                result.Add(new SaveCandidateItem
+                {
+                    GameId = game.Id, GameVersionId = game.CurrentVersionId ?? Guid.Empty, GameName = game.DisplayName,
+                    SourceKind = "系统目录", SourcePath = file, SourceRootPath = rule.Path, RelativePath = relative,
+                    StorageRelativePath = Path.Combine("system", GetPathKey(rule.Path), relative), ChangeType = "新增",
+                    FileSize = info.Length, ModifiedAt = info.LastWriteTime, Sha256 = await FileFingerprintService.ComputeSha256Async(file, token),
+                    Decision = SaveCandidateDecisions.Pending, SnapshotKind = snapshotKind, PreviouslyConfirmed = false,
+                    SharedDirectory = IsSharedDirectory(state, rule.Path), SystemMatchReason = "归档时扫描已定位存档目录"
+                });
+            }
+        }
+        return result;
+    }
 
     private static Task<List<SystemFileSnapshotItem>> CaptureAsync(IReadOnlyCollection<string> roots, IProgress<SystemMonitorProgress>? progress, CancellationToken token, bool applyInitialExclusions) => Task.Run(() =>
     {
@@ -221,10 +275,11 @@ public static class SystemSaveMonitoringService
                 directories = Directory.GetDirectories(directory);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
-            foreach (var file in files) yield return file;
+            foreach (var file in files) if (!IsHidden(file)) yield return file;
             foreach (var child in directories.OrderByDescending(path => path, StringComparer.CurrentCultureIgnoreCase))
             {
                 if (applyInitialExclusions && ShouldExcludeInitialDirectory(child)) continue;
+                if (IsHidden(child)) continue;
                 try { if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) != 0) continue; }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
                 pending.Push(child);
@@ -262,6 +317,12 @@ public static class SystemSaveMonitoringService
     }
 
     private static string Compact(string value) => new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+    private static bool IsHidden(string path)
+    {
+        try { return (File.GetAttributes(path) & FileAttributes.Hidden) != 0; }
+        catch (UnauthorizedAccessException) { return true; }
+        catch (IOException) { return false; }
+    }
     private static bool IsWithinDirectory(string directory, string path)
     {
         var root = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
