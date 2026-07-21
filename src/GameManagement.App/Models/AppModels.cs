@@ -25,6 +25,12 @@ public sealed class AppState
     public BackupSettingsItem BackupSettings { get; set; } = new();
     public List<DeletionHistoryItem> DeletionHistory { get; set; } = [];
     public List<OperationTaskItem> OperationTasks { get; set; } = [];
+    public UiSettingsItem UiSettings { get; set; } = new();
+}
+
+public sealed class UiSettingsItem
+{
+    public string ThemeName { get; set; } = ThemeNames.Classic;
 }
 
 public sealed class ScanPathItem

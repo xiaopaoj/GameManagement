@@ -87,6 +87,16 @@ public sealed class ModelTests
     }
 
     [Theory]
+    [InlineData("Windows 11 风格", ThemeNames.Windows11)]
+    [InlineData("经典主题", ThemeNames.Classic)]
+    [InlineData("未知主题", ThemeNames.Classic)]
+    [InlineData(null, ThemeNames.Classic)]
+    public void 界面主题名称应安全归一化(string? input, string expected)
+    {
+        Assert.Equal(expected, ThemeService.Normalize(input));
+    }
+
+    [Theory]
     [InlineData("示例游戏.zip", SourceKinds.ArchiveFile, "示例游戏")]
     [InlineData("示例游戏.rar", SourceKinds.ArchiveFile, "示例游戏")]
     [InlineData("bhfuztp2.7z.001", SourceKinds.ArchiveFile, "bhfuztp2")]

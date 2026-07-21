@@ -1,0 +1,13 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#F4F6F8"/>
+    <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="ControlBorderBrush" Color="#BCC5CE"/>
+    <SolidColorBrush x:Key="ControlHoverBrush" Color="#E8EDF2"/>
+    <SolidColorBrush x:Key="ControlPressedBrush" Color="#DCE4EC"/>
+    <SolidColorBrush x:Key="PrimaryTextBrush" Color="#17212B"/>
+    <SolidColorBrush x:Key="MenuBackgroundBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="MenuHoverBrush" Color="#E8EDF2"/>
+    <Style TargetType="Window"><Setter Property="Background" Value="{DynamicResource AppBackgroundBrush}"/><Setter Property="TextElement.Foreground" Value="{DynamicResource PrimaryTextBrush}"/><Setter Property="FontFamily" Value="Segoe UI"/></Style>
+    <Style TargetType="ContextMenu"><Setter Property="Background" Value="{DynamicResource MenuBackgroundBrush}"/><Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/><Setter Property="BorderThickness" Value="1"/></Style>
+    <Style TargetType="MenuItem"><Setter Property="Padding" Value="8,5"/></Style>
+</ResourceDictionary>

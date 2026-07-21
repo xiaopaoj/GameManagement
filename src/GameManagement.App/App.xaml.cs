@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Threading;
 using GameManagement.Services;
+using GameManagement.Models;
 
 namespace GameManagement;
 
@@ -16,11 +17,14 @@ public partial class App : Application
             AppPaths.EnsureDirectories();
             AppLogger.Initialize();
             base.OnStartup(e);
+            var startupStore = new StateStore();
+            var startupState = startupStore.Load();
+            ThemeService.Apply(startupState.UiSettings.ThemeName);
             if (e.Args.Any(argument => argument.Equals("--scheduled-backup", StringComparison.OrdinalIgnoreCase)))
             {
                 ShutdownMode = ShutdownMode.OnExplicitShutdown;
-                var store = new StateStore();
-                var state = store.Load();
+                var store = startupStore;
+                var state = startupState;
                 BackupExecutionResult result;
                 try
                 {

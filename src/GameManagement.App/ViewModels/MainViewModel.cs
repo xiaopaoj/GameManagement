@@ -464,6 +464,21 @@ public sealed class MainViewModel : ObservableObject
         .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
         .ToList();
 
+    public IReadOnlyList<string> ThemeOptions { get; } = [ThemeNames.Classic, ThemeNames.Windows11];
+
+    public string SelectedTheme
+    {
+        get => _state.UiSettings.ThemeName;
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value) || value == _state.UiSettings.ThemeName) return;
+            _state.UiSettings.ThemeName = value;
+            ThemeService.Apply(value);
+            Raise();
+            Save($"界面主题已切换为：{value}");
+        }
+    }
+
     public void SetSelectedGameExtractionTemplate(Guid? templateId)
     {
         if (SelectedGame is null) { StatusMessage = "请先选择一个游戏"; return; }
