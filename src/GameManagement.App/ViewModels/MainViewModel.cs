@@ -422,6 +422,19 @@ public sealed class MainViewModel : ObservableObject
         LoadCollections();
     }
 
+    public void SetSelectedGameHasSystemSave(bool hasSystemSave)
+    {
+        if (SelectedGame is null) return;
+        SelectedGame.HasSystemSave = hasSystemSave;
+        if (!hasSystemSave)
+        {
+            SystemSaveMonitoringService.CancelLatestSession(_state, SelectedGame, "已关闭系统存档扫描");
+            _state.SaveCandidates.RemoveAll(item => item.GameId == SelectedGame.Id && item.SourceKind == "系统目录" && item.Decision == SaveCandidateDecisions.Pending);
+        }
+        Save(hasSystemSave ? "已启用该游戏的系统存档扫描" : "已标记该游戏不存在系统存档，后续不再扫描系统目录");
+        CollectionViewSource.GetDefaultView(Games).Refresh();
+    }
+
     private void OpenGameFolder()
     {
         var path = SelectedGame?.PlayableRootPath;

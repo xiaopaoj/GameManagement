@@ -574,11 +574,9 @@ public partial class GameDetailWindow : Window
 
     private void EditGame_Click(object sender, RoutedEventArgs e)
     {
-        var nameWindow = new TextInputWindow("编辑游戏名称", "请输入游戏显示名称：", _game.DisplayName) { Owner = this };
-        if (nameWindow.ShowDialog() != true) return;
-        var noteWindow = new TextInputWindow("编辑游戏备注", "请输入备注；允许留空：", _game.Note, true) { Owner = this };
-        if (noteWindow.ShowDialog() != true) return;
-        _game.DisplayName = nameWindow.Value.Trim(); _game.Note = noteWindow.Value.Trim();
+        var editWindow = new GameEditWindow(_game.DisplayName, _game.Note) { Owner = this };
+        if (editWindow.ShowDialog() != true) return;
+        _game.DisplayName = editWindow.GameName; _game.Note = editWindow.Note;
         _save("游戏名称与备注已更新"); RefreshBindings();
     }
 

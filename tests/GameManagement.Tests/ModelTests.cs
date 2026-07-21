@@ -1504,6 +1504,23 @@ public sealed class ModelTests
         Assert.Contains("x:Name=\"CopyGameNameText\" IsReadOnly=\"True\"", deletionXaml);
     }
 
+    [Fact]
+    public void 游戏库右键菜单应支持系统存档开关且名称备注使用同一窗口编辑()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
+        var editXaml = File.ReadAllText(Path.Combine(appRoot, "GameEditWindow.xaml"));
+
+        Assert.Contains("Header=\"存在 Windows 系统目录存档\" IsCheckable=\"True\"", mainXaml);
+        Assert.Contains("new GameEditWindow(_game.DisplayName, _game.Note)", detailSource);
+        Assert.Contains("x:Name=\"NameText\"", editXaml);
+        Assert.Contains("x:Name=\"NoteText\"", editXaml);
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

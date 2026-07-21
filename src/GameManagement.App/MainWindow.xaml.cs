@@ -37,6 +37,16 @@ public partial class MainWindow : Window
         viewModel.OpenSelectedGameDetails(item.Tag as string);
     }
 
+    private void GameContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel) SystemSaveContextMenuItem.IsChecked = viewModel.SelectedGame?.HasSystemSave == true;
+    }
+
+    private void SystemSaveContextMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel) viewModel.SetSelectedGameHasSystemSave(SystemSaveContextMenuItem.IsChecked);
+    }
+
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         if (DataContext is not MainViewModel { IsScanning: true }) return;
