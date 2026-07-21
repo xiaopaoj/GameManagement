@@ -1439,6 +1439,51 @@ public sealed class ModelTests
         Assert.Contains(state.DeletionHistory, item => item.ObjectType == "游戏主记录" && item.Status == "成功");
     }
 
+    [Fact]
+    public void 删除游戏主记录应按勾选项同步清理关联数据并保留原始文件()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var diskRoot = Path.Combine(root, "disk");
+        var backupPath = Path.Combine(root, "backup.zip");
+        var sourcePath = Path.Combine(root, "source.zip");
+        Directory.CreateDirectory(diskRoot);
+        File.WriteAllText(backupPath, "backup");
+        File.WriteAllText(sourcePath, "source");
+        var disk = new GameDiskItem { RootPath = diskRoot };
+        var version = new GameVersionItem { VersionName = "待删除版本", SourcePath = sourcePath };
+        var game = new GameItem { DisplayName = "批量删除游戏", Versions = [version], HasLocalSave = true, CurrentSaveGameDiskId = disk.Id, RetainedSourcePaths = [sourcePath] };
+        var state = new AppState { Games = [game], GameDisks = [disk] };
+        state.Credentials.Add(new ArchiveCredentialItem { GameVersionId = version.Id, ArchiveFingerprint = "fingerprint" });
+        state.ExternalBackups.Add(new ExternalBackupItem { GameId = game.Id, FilePath = backupPath });
+        state.SystemSaveDirectories.Add(new SystemSaveDirectoryRuleItem { GameId = game.Id, Path = root });
+        Directory.CreateDirectory(Path.Combine(diskRoot, "GameSave", game.Id.ToString("N")));
+        Directory.CreateDirectory(Path.Combine(diskRoot, "GameTemp", game.Id.ToString()));
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => GameRecordDeletionService.RemoveWithRelatedData(state, game, new GameRecordDeletionOptions()));
+
+            GameRecordDeletionService.RemoveWithRelatedData(state, game, new GameRecordDeletionOptions
+            {
+                DeleteVersions = true,
+                DeleteLocalSave = true,
+                DeleteSystemSaveConfiguration = true,
+                DeleteExternalBackups = true,
+                DeleteTemporaryDirectories = true,
+                DetachRetainedSources = true
+            });
+
+            Assert.DoesNotContain(state.Games, item => item.Id == game.Id);
+            Assert.Empty(state.Credentials);
+            Assert.Empty(state.ExternalBackups);
+            Assert.Empty(state.SystemSaveDirectories);
+            Assert.True(File.Exists(sourcePath));
+            Assert.False(File.Exists(backupPath));
+            Assert.Contains(state.DeletionHistory, item => item.ObjectType == "游戏版本记录");
+            Assert.Contains(state.DeletionHistory, item => item.ObjectType == "游戏主记录");
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

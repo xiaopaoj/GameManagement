@@ -483,15 +483,10 @@ public partial class GameDetailWindow : Window
 
     private void DeleteGameRecord_Click(object sender, RoutedEventArgs e)
     {
-        var blockers = GameRecordDeletionService.GetBlockers(_state, _game);
-        if (blockers.Count > 0)
-        {
-            MessageBox.Show($"删除游戏主记录前必须先清空所有关联数据：\n\n- {string.Join("\n- ", blockers)}", "禁止删除游戏记录", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-        var input = new TextInputWindow("删除游戏主记录", $"此操作只删除数据库中的游戏主记录。请输入完整游戏名称“{_game.DisplayName}”确认：", string.Empty) { Owner = this };
-        if (input.ShowDialog() != true || !input.Value.Equals(_game.DisplayName, StringComparison.Ordinal)) { ShowError("游戏名称不匹配，删除操作已取消。"); return; }
-        try { GameRecordDeletionService.Remove(_state, _game); _save("游戏主记录已删除"); DialogResult = true; }
+        if (_game.Status == "运行中") { ShowError("主游戏程序运行期间禁止删除游戏记录。"); return; }
+        var dialog = new GameRecordDeletionWindow(_state, _game) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        try { GameRecordDeletionService.RemoveWithRelatedData(_state, _game, dialog.Options); _save("游戏主记录及勾选的关联数据已删除"); DialogResult = true; }
         catch (Exception ex) { ShowError(ex.Message); }
     }
 
