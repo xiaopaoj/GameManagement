@@ -15,16 +15,46 @@ public partial class GameDetailWindow : Window
     private readonly Action<GameItem, string> _gameStateChanged;
     private bool _versionSwitchInProgress;
     private bool _autoReplayRemainingHistory;
+    private readonly string? _initialAction;
+    private bool _initialActionExecuted;
 
-    public GameDetailWindow(GameItem game, AppState state, Action<string> save, Action<GameItem, string> gameStateChanged)
+    public GameDetailWindow(GameItem game, AppState state, Action<string> save, Action<GameItem, string> gameStateChanged, string? initialAction = null)
     {
         InitializeComponent();
         _game = game;
         _state = state;
         _save = save;
         _gameStateChanged = gameStateChanged;
+        _initialAction = initialAction;
         DataContext = game;
         Title = $"游戏详情 - {game.DisplayName}";
+        ContentRendered += GameDetailWindow_ContentRendered;
+    }
+
+    private void GameDetailWindow_ContentRendered(object? sender, EventArgs e)
+    {
+        if (_initialActionExecuted || string.IsNullOrWhiteSpace(_initialAction)) return;
+        _initialActionExecuted = true;
+        var args = new RoutedEventArgs();
+        switch (_initialAction)
+        {
+            case "准备游玩": Prepare_Click(this, args); break;
+            case "编辑名称与备注": EditGame_Click(this, args); break;
+            case "启动游戏": Launch_Click(this, args); break;
+            case "归档游戏": Archive_Click(this, args); break;
+            case "特殊归档": SpecialArchive_Click(this, args); break;
+            case "手动备份": ManualBackup_Click(this, args); break;
+            case "存档目录设置": SaveDirectories_Click(this, args); break;
+            case "存档与快照": Snapshots_Click(this, args); break;
+            case "版本管理": Versions_Click(this, args); break;
+            case "解压密码管理": Credentials_Click(this, args); break;
+            case "识别游戏目录": RecognizeGame_Click(this, args); break;
+            case "重新定位原始文件": RelocateSource_Click(this, args); break;
+            case "删除原始文件": DeleteSource_Click(this, args); break;
+            case "删除游戏主记录": DeleteGameRecord_Click(this, args); break;
+            case "打开原始位置": OpenSource_Click(this, args); break;
+            case "打开游戏目录": OpenPlayable_Click(this, args); break;
+        }
     }
 
     private void OpenSource_Click(object sender, RoutedEventArgs e)

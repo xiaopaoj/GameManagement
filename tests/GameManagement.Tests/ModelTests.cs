@@ -1484,6 +1484,26 @@ public sealed class ModelTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public void 游戏库右键菜单应覆盖详情功能且删除确认名称支持复制()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
+        var deletionXaml = File.ReadAllText(Path.Combine(appRoot, "GameRecordDeletionWindow.xaml"));
+
+        foreach (var action in new[] { "准备游玩", "编辑名称与备注", "启动游戏", "归档游戏", "特殊归档", "手动备份", "存档目录设置", "存档与快照", "版本管理", "解压密码管理", "识别游戏目录", "重新定位原始文件", "删除原始文件", "删除游戏主记录", "打开原始位置", "打开游戏目录" })
+        {
+            Assert.Contains($"Tag=\"{action}\"", mainXaml);
+            Assert.Contains($"case \"{action}\"", detailSource);
+        }
+        Assert.Contains("PreviewMouseRightButtonDown=\"GameGrid_PreviewMouseRightButtonDown\"", mainXaml);
+        Assert.Contains("x:Name=\"CopyGameNameText\" IsReadOnly=\"True\"", deletionXaml);
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

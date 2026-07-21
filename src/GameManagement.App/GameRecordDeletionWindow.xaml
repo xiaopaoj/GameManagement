@@ -24,6 +24,7 @@
         </ScrollViewer>
         <StackPanel Grid.Row="2">
             <TextBlock x:Name="NamePromptText" TextWrapping="Wrap" Margin="0,0,0,6"/>
+            <TextBox x:Name="CopyGameNameText" IsReadOnly="True" Padding="8" Margin="0,0,0,8" ToolTip="可选择并复制完整游戏名称"/>
             <TextBox x:Name="GameNameText" Padding="8"/>
         </StackPanel>
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">

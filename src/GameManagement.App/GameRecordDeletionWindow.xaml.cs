@@ -26,6 +26,7 @@ public partial class GameRecordDeletionWindow : Window
         _game = game;
         DescriptionText.Text = $"删除游戏“{game.DisplayName}”的主记录。请选择需要同步清理的关联数据；未勾选且仍存在的关联数据会阻止删除。";
         NamePromptText.Text = $"请输入完整游戏名称“{game.DisplayName}”完成最终确认：";
+        CopyGameNameText.Text = game.DisplayName;
         VersionsCheck.IsEnabled = game.Versions.Count > 0;
         PlayableCheck.IsEnabled = !string.IsNullOrWhiteSpace(game.PlayableRootPath) && Directory.Exists(game.PlayableRootPath);
         LocalSaveCheck.IsEnabled = GameRecordDeletionService.HasLocalSaveData(state, game);

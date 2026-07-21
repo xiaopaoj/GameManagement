@@ -412,10 +412,12 @@ public sealed class MainViewModel : ObservableObject
         catch (Exception ex) { AppLogger.Error("主程序启动后补执行等待备份失败", ex); }
     }
 
-    public void OpenSelectedGameDetails()
+    public void OpenSelectedGameDetails() => OpenSelectedGameDetails(null);
+
+    public void OpenSelectedGameDetails(string? initialAction)
     {
         if (SelectedGame is null) { StatusMessage = "请先选择一个游戏"; return; }
-        var window = new GameDetailWindow(SelectedGame, _state, message => Save(message), OnGameStateChanged) { Owner = Application.Current.MainWindow };
+        var window = new GameDetailWindow(SelectedGame, _state, message => Save(message), OnGameStateChanged, initialAction) { Owner = Application.Current.MainWindow };
         window.ShowDialog();
         LoadCollections();
     }

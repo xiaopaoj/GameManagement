@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using GameManagement.ViewModels;
 using GameManagement.Services;
 
@@ -17,6 +18,23 @@ public partial class MainWindow : Window
     private void GameGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (DataContext is MainViewModel viewModel) viewModel.OpenSelectedGameDetails();
+    }
+
+    private void GameGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        DependencyObject? current = e.OriginalSource as DependencyObject;
+        while (current is not null && current is not System.Windows.Controls.DataGridRow) current = VisualTreeHelper.GetParent(current);
+        if (current is System.Windows.Controls.DataGridRow row)
+        {
+            GameGrid.SelectedItem = row.Item;
+            row.IsSelected = true;
+        }
+    }
+
+    private void GameContextMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel || sender is not System.Windows.Controls.MenuItem item) return;
+        viewModel.OpenSelectedGameDetails(item.Tag as string);
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)

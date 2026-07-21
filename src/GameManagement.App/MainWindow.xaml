@@ -22,7 +22,32 @@
                 <Grid Margin="10">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8"><Button Content="查看详情" Command="{Binding OpenGameDetailsCommand}"/><Button Content="启动游戏" Command="{Binding LaunchGameCommand}"/><Button Content="打开游戏目录" Command="{Binding OpenGameFolderCommand}"/><Button Content="刷新" Command="{Binding ReloadCommand}"/></StackPanel>
-                    <DataGrid x:Name="GameGrid" Grid.Row="1" ItemsSource="{Binding Games}" SelectedItem="{Binding SelectedGame}" MouseDoubleClick="GameGrid_MouseDoubleClick" RowHeight="44">
+                    <DataGrid x:Name="GameGrid" Grid.Row="1" ItemsSource="{Binding Games}" SelectedItem="{Binding SelectedGame}" MouseDoubleClick="GameGrid_MouseDoubleClick" PreviewMouseRightButtonDown="GameGrid_PreviewMouseRightButtonDown" RowHeight="44">
+                        <DataGrid.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="查看详情" Click="GameContextMenu_Click"/>
+                                <Separator/>
+                                <MenuItem Header="准备游玩" Tag="准备游玩" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="编辑名称与备注" Tag="编辑名称与备注" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="启动游戏" Tag="启动游戏" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="归档游戏" Tag="归档游戏" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="特殊归档" Tag="特殊归档" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="手动备份" Tag="手动备份" Click="GameContextMenu_Click"/>
+                                <Separator/>
+                                <MenuItem Header="存档目录设置" Tag="存档目录设置" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="存档与快照" Tag="存档与快照" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="版本管理" Tag="版本管理" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="解压密码管理" Tag="解压密码管理" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="识别游戏目录" Tag="识别游戏目录" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="重新定位原始文件" Tag="重新定位原始文件" Click="GameContextMenu_Click"/>
+                                <Separator/>
+                                <MenuItem Header="打开原始位置" Tag="打开原始位置" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="打开游戏目录" Tag="打开游戏目录" Click="GameContextMenu_Click"/>
+                                <Separator/>
+                                <MenuItem Header="删除原始文件" Tag="删除原始文件" Click="GameContextMenu_Click"/>
+                                <MenuItem Header="删除游戏主记录" Tag="删除游戏主记录" Click="GameContextMenu_Click"/>
+                            </ContextMenu>
+                        </DataGrid.ContextMenu>
                         <DataGrid.Columns><DataGridTemplateColumn Header="图标" Width="58"><DataGridTemplateColumn.CellTemplate><DataTemplate><Image Source="{Binding IconFullPath}" Width="36" Height="36" Stretch="Uniform"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridTextColumn Header="游戏名称" Binding="{Binding DisplayName}" Width="2*"/><DataGridTextColumn Header="当前版本" Binding="{Binding CurrentVersionName}" Width="*"/><DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="100"/><DataGridTextColumn Header="本地存档" Binding="{Binding LocalSaveStatus}" Width="75"/><DataGridTextColumn Header="原始状态" Binding="{Binding SourcePathStatus}" Width="75"/><DataGridTextColumn Header="原始路径" Binding="{Binding SourcePath}" Width="3*"/><DataGridTextColumn Header="上次游玩" Binding="{Binding LastPlayedAt}" Width="150"/></DataGrid.Columns>
                     </DataGrid>
                 </Grid>
