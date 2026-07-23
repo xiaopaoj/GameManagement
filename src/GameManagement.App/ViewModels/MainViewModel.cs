@@ -210,7 +210,7 @@ public sealed class MainViewModel : ObservableObject
         progressWindow.EnableCancellation(cancellation.Cancel);
         var task = new OperationTaskItem { Name = $"添加 {selected.Count} 个游戏", TaskType = "来源指纹", Status = "运行中", Message = "正在计算原始来源指纹" };
         _state.OperationTasks.Add(task); Tasks.Insert(0, task); _store.Save(_state);
-        owner.IsEnabled = false; progressWindow.Show();
+        progressWindow.Show();
         try
         {
             var prepared = new List<(ScanCandidate Candidate, GameVersionItem Version)>();
@@ -451,6 +451,18 @@ public sealed class MainViewModel : ObservableObject
         actionHost.ExecuteAction(action);
     }
 
+    public async Task ExecuteGamesActionAsync(IReadOnlyList<GameItem> games, string action)
+    {
+        if (games.Count == 0 || action is not ("准备游玩" or "归档游戏")) return;
+        StatusMessage = $"已将 {games.Count} 个游戏加入“{action}”后台队列";
+        foreach (var game in games.DistinctBy(item => item.Id))
+        {
+            var actionHost = new GameDetailWindow(game, _state, SaveAndRefreshGameLibrary, OnGameStateChanged, directActionHost: true) { Owner = Application.Current.MainWindow };
+            await actionHost.ExecuteBackgroundActionAsync(action);
+        }
+        SaveAndRefreshGameLibrary($"批量{action}队列处理完成");
+    }
+
     public void OpenExtractionTemplates() => new ExtractionTemplateWindow(_state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();
 
     public IReadOnlyList<ExtractionTemplateItem> ExtractionTemplates => _state.ExtractionTemplates
@@ -479,6 +491,15 @@ public sealed class MainViewModel : ObservableObject
         if (templateId is not null && template is null) { StatusMessage = "所选解压模板不存在，请刷新后重试"; return; }
         SelectedGame.ExtractionTemplateId = template?.Id;
         SaveAndRefreshGameLibrary(template is null ? "已取消游戏的解压流程模板" : $"已为游戏选择解压流程模板：{template.Name}");
+    }
+
+    public void SetGamesExtractionTemplate(IReadOnlyList<GameItem> games, Guid? templateId)
+    {
+        if (games.Count == 0) { StatusMessage = "请先选择至少一个游戏"; return; }
+        var template = templateId is Guid id ? _state.ExtractionTemplates.FirstOrDefault(item => item.Id == id) : null;
+        if (templateId is not null && template is null) { StatusMessage = "所选解压模板不存在，请刷新后重试"; return; }
+        foreach (var game in games.DistinctBy(item => item.Id)) game.ExtractionTemplateId = template?.Id;
+        SaveAndRefreshGameLibrary(template is null ? $"已取消 {games.Count} 个游戏的解压流程模板" : $"已为 {games.Count} 个游戏选择解压流程模板：{template.Name}");
     }
 
     public void SetSelectedGameHasSystemSave(bool hasSystemSave)

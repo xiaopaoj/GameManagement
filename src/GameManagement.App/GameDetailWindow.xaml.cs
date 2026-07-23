@@ -66,6 +66,13 @@ public partial class GameDetailWindow : Window
         }
     }
 
+    public Task ExecuteBackgroundActionAsync(string action) => action switch
+    {
+        "准备游玩" => PrepareAsync(),
+        "归档游戏" => ArchiveCurrentAsync(false),
+        _ => Task.CompletedTask
+    };
+
     private void OpenSource_Click(object sender, RoutedEventArgs e)
     {
         if (File.Exists(_game.SourcePath))
@@ -88,8 +95,11 @@ public partial class GameDetailWindow : Window
     }
 
 
-    private async void Prepare_Click(object sender, RoutedEventArgs e)
+    private async void Prepare_Click(object sender, RoutedEventArgs e) => await PrepareAsync();
+
+    private async Task PrepareAsync()
     {
+        if (_game.Status is "准备中" or "归档中") { ShowError("该游戏已有准备或归档任务正在运行。"); return; }
         var version = _game.Versions.FirstOrDefault(item => item.Id == _game.CurrentVersionId) ?? _game.Versions.FirstOrDefault();
         if (version is null) { ShowError("当前游戏没有可准备的版本。"); FailPendingVersionSwitch(); return; }
         if (!File.Exists(version.SourcePath) && !Directory.Exists(version.SourcePath)) { ShowError("原始文件或目录不存在，请先执行重新定位。"); FailPendingVersionSwitch(); return; }
@@ -142,7 +152,7 @@ public partial class GameDetailWindow : Window
 
         using var cancellation = new CancellationTokenSource();
         var task = new OperationTaskItem { Name = $"准备游戏：{_game.DisplayName}", TaskType = "准备游玩", GameId = _game.Id, GameVersionId = version.Id, Status = "运行中", Message = "正在初始化准备任务", WorkingDirectory = workRoot };
-        _state.OperationTasks.Add(task); _save("准备游玩任务已创建");
+        _state.OperationTasks.Add(task); _game.Status = "准备中"; _save("准备游玩任务已创建");
         var progress = new PreparationProgressWindow { Owner = DialogOwner };
         progress.EnableCancellation(cancellation.Cancel);
         progress.Show(); IsEnabled = false;

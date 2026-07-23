@@ -779,6 +779,27 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 游戏库应支持多选后台准备归档和批量模板()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var xaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var windowSource = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var viewModelSource = File.ReadAllText(Path.Combine(appRoot, "ViewModels", "MainViewModel.cs"));
+
+        Assert.Contains("SelectionMode=\"Extended\"", xaml);
+        Assert.Contains("ExecuteGamesActionAsync(games, action)", windowSource);
+        Assert.Contains("SetGamesExtractionTemplate", windowSource);
+        Assert.Contains("foreach (var game in games.DistinctBy", viewModelSource);
+        Assert.Contains("await actionHost.ExecuteBackgroundActionAsync(action)", viewModelSource);
+        var addMethod = viewModelSource[viewModelSource.IndexOf("private async Task AddCandidatesToLibraryAsync", StringComparison.Ordinal)..viewModelSource.IndexOf("public static string GetCandidateDisplayName", StringComparison.Ordinal)];
+        Assert.Contains("progressWindow.Show();", addMethod);
+        Assert.DoesNotContain("owner.IsEnabled = false", addMethod);
+    }
+
+    [Fact]
     public void 历史解压确认应支持自动重放后续步骤且未勾选时继续确认()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);

@@ -26,6 +26,7 @@ public partial class MainWindow : Window
         while (current is not null && current is not System.Windows.Controls.DataGridRow) current = VisualTreeHelper.GetParent(current);
         if (current is System.Windows.Controls.DataGridRow row)
         {
+            if (!row.IsSelected) GameGrid.SelectedItems.Clear();
             GameGrid.SelectedItem = row.Item;
             row.IsSelected = true;
         }
@@ -34,7 +35,12 @@ public partial class MainWindow : Window
     private void GameContextMenu_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel viewModel || sender is not System.Windows.Controls.MenuItem item) return;
-        if (item.Tag is string action) viewModel.ExecuteSelectedGameAction(action);
+        var games = GameGrid.SelectedItems.OfType<GameManagement.Models.GameItem>().OrderBy(game => GameGrid.Items.IndexOf(game)).ToList();
+        if (item.Tag is string action)
+        {
+            if (games.Count > 1 && action is "准备游玩" or "归档游戏") _ = viewModel.ExecuteGamesActionAsync(games, action);
+            else viewModel.ExecuteSelectedGameAction(action);
+        }
         else viewModel.OpenSelectedGameDetails();
     }
 
@@ -43,6 +49,12 @@ public partial class MainWindow : Window
         if (DataContext is MainViewModel viewModel)
         {
             SystemSaveContextMenuItem.IsChecked = viewModel.SelectedGame?.HasSystemSave == true;
+            var multiple = GameGrid.SelectedItems.Count > 1;
+            if (sender is System.Windows.Controls.ContextMenu menu)
+            {
+                foreach (var menuItem in menu.Items.OfType<System.Windows.Controls.MenuItem>())
+                    menuItem.IsEnabled = !multiple || ReferenceEquals(menuItem, PrepareContextMenuItem) || ReferenceEquals(menuItem, ArchiveContextMenuItem) || ReferenceEquals(menuItem, ExtractionTemplateContextMenuItem);
+            }
             PopulateExtractionTemplateMenu(viewModel);
         }
     }
@@ -55,8 +67,10 @@ public partial class MainWindow : Window
     private void PopulateExtractionTemplateMenu(MainViewModel viewModel)
     {
         ExtractionTemplateContextMenuItem.Items.Clear();
-        var currentId = viewModel.SelectedGame?.ExtractionTemplateId;
-        var noneItem = new System.Windows.Controls.MenuItem { Header = "不使用模板", IsCheckable = true, IsChecked = currentId is null, Tag = Guid.Empty };
+        var selectedGames = GameGrid.SelectedItems.OfType<GameManagement.Models.GameItem>().ToList();
+        var hasUniformTemplate = selectedGames.Count > 0 && selectedGames.Select(item => item.ExtractionTemplateId).Distinct().Count() == 1;
+        var currentId = hasUniformTemplate ? selectedGames[0].ExtractionTemplateId : null;
+        var noneItem = new System.Windows.Controls.MenuItem { Header = "不使用模板", IsCheckable = true, IsChecked = hasUniformTemplate && currentId is null, Tag = Guid.Empty };
         noneItem.Click += ExtractionTemplateMenuItem_Click;
         ExtractionTemplateContextMenuItem.Items.Add(noneItem);
         if (viewModel.ExtractionTemplates.Count > 0) ExtractionTemplateContextMenuItem.Items.Add(new System.Windows.Controls.Separator());
@@ -73,7 +87,7 @@ public partial class MainWindow : Window
     private void ExtractionTemplateMenuItem_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is MainViewModel viewModel && sender is System.Windows.Controls.MenuItem { Tag: Guid templateId })
-            viewModel.SetSelectedGameExtractionTemplate(templateId == Guid.Empty ? null : templateId);
+            viewModel.SetGamesExtractionTemplate(GameGrid.SelectedItems.OfType<GameManagement.Models.GameItem>().OrderBy(game => GameGrid.Items.IndexOf(game)).ToList(), templateId == Guid.Empty ? null : templateId);
     }
 
     private void SystemSaveContextMenuItem_Click(object sender, RoutedEventArgs e)
