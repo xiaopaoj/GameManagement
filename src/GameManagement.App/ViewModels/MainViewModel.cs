@@ -98,7 +98,8 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public static IEnumerable<GameItem> SortGames(IEnumerable<GameItem> games) => games
-        .OrderByDescending(game => game.AddedAt)
+        .OrderBy(game => game.ArchiveStatus == "已归档" || game.Status == "已归档")
+        .ThenByDescending(game => game.AddedAt)
         .ThenByDescending(game => game.LastPlayedAt ?? DateTime.MinValue)
         .ThenBy(game => game.DisplayName, StringComparer.CurrentCultureIgnoreCase);
 
@@ -525,6 +526,12 @@ public sealed class MainViewModel : ObservableObject
         var existingIds = _state.Games.Select(game => game.Id).ToHashSet();
         foreach (var removed in Games.Where(game => !existingIds.Contains(game.Id)).ToList()) Games.Remove(removed);
         foreach (var added in SortGames(_state.Games).Where(game => Games.All(existing => existing.Id != game.Id))) Games.Add(added);
+        var sortedGames = SortGames(Games).ToList();
+        for (var index = 0; index < sortedGames.Count; index++)
+        {
+            var currentIndex = Games.IndexOf(sortedGames[index]);
+            if (currentIndex != index) Games.Move(currentIndex, index);
+        }
         if (SelectedGame is not null && !existingIds.Contains(SelectedGame.Id)) SelectedGame = null;
         CollectionViewSource.GetDefaultView(Games).Refresh();
     }

@@ -45,6 +45,34 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 已归档游戏应始终排在游戏库最后()
+    {
+        var archived = new GameItem { DisplayName = "最新但已归档", AddedAt = DateTime.Now, Status = "已归档", ArchiveStatus = "已归档" };
+        var active = new GameItem { DisplayName = "较早但可游玩", AddedAt = DateTime.Now.AddDays(-10), Status = "可游玩" };
+
+        var result = MainViewModel.SortGames([archived, active]).ToList();
+
+        Assert.Equal([active, archived], result);
+    }
+
+    [Fact]
+    public void 公共任务进度窗口应支持最小化和后台运行()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var xaml = File.ReadAllText(Path.Combine(appRoot, "PreparationProgressWindow.xaml"));
+        var source = File.ReadAllText(Path.Combine(appRoot, "PreparationProgressWindow.xaml.cs"));
+
+        Assert.Contains("ResizeMode=\"CanMinimize\"", xaml);
+        Assert.Contains("ShowInTaskbar=\"True\"", xaml);
+        Assert.Contains("Content=\"后台运行\"", xaml);
+        Assert.Contains("_runInBackground = true", source);
+        Assert.Contains("Dispatcher.BeginInvoke(Hide)", source);
+    }
+
+    [Fact]
     public void 扫描候选应按文件修改时间倒序排序()
     {
         var modifiedAt = new DateTime(2026, 7, 21, 12, 0, 0);
