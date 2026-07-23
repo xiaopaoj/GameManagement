@@ -18,9 +18,10 @@ public partial class GameDetailWindow : Window
     private readonly string? _initialAction;
     private bool _initialActionExecuted;
     private readonly bool _directActionHost;
+    private readonly BatchOperationContext? _batchContext;
     private Window DialogOwner => _directActionHost && Owner is Window owner ? owner : this;
 
-    public GameDetailWindow(GameItem game, AppState state, Action<string> save, Action<GameItem, string> gameStateChanged, string? initialAction = null, bool directActionHost = false)
+    public GameDetailWindow(GameItem game, AppState state, Action<string> save, Action<GameItem, string> gameStateChanged, string? initialAction = null, bool directActionHost = false, BatchOperationContext? batchContext = null)
     {
         InitializeComponent();
         _game = game;
@@ -29,6 +30,7 @@ public partial class GameDetailWindow : Window
         _gameStateChanged = gameStateChanged;
         _initialAction = initialAction;
         _directActionHost = directActionHost;
+        _batchContext = batchContext;
         DataContext = game;
         Title = $"游戏详情 - {game.DisplayName}";
         ContentRendered += GameDetailWindow_ContentRendered;
@@ -112,8 +114,14 @@ public partial class GameDetailWindow : Window
         var estimateDetail = estimate.ContentMetadataAvailable
             ? $"来源复制 {Models.SizeFormatter.Format(estimate.SourceCopyBytes)} + 首层展开 {Models.SizeFormatter.Format(estimate.FirstExtractionBytes)} + 二次解压与最终目录预留 {Models.SizeFormatter.Format(estimate.SecondExtractionAndFinalReserveBytes)} + 安全余量 {Models.SizeFormatter.Format(estimate.SafetyReserveBytes)}"
             : $"无法读取压缩条目元数据，已按来源体积四倍安全回退（来源 {Models.SizeFormatter.Format(estimate.SourceCopyBytes)}）";
-        var diskChoice = SelectChoice("选择游戏盘", $"请选择本次准备游戏使用的游戏盘。预计至少需要 {Models.SizeFormatter.Format(estimatedSpace)} 临时与解压空间。\n{estimateDetail}", disks.Select(disk => new ChoiceItem { Name = disk.IsDefault ? $"{disk.DisplayName}（默认）" : disk.DisplayName, Description = $"{disk.RootPath}（剩余 {disk.FreeSpaceText}，最低保留 {disk.MinimumFreeSpaceText}）", Value = disk }));
-        if (diskChoice?.Value is not GameDiskItem disk) { FailPendingVersionSwitch(); return; }
+        var disk = _batchContext?.SelectedGameDiskId is Guid selectedDiskId ? disks.FirstOrDefault(item => item.Id == selectedDiskId) : null;
+        if (disk is null)
+        {
+            var diskChoice = SelectChoice("选择游戏盘", $"请选择本次准备游戏使用的游戏盘。预计至少需要 {Models.SizeFormatter.Format(estimatedSpace)} 临时与解压空间。\n{estimateDetail}{BatchPromptSuffix()}", disks.Select(item => new ChoiceItem { Name = item.IsDefault ? $"{item.DisplayName}（默认）" : item.DisplayName, Description = $"{item.RootPath}（剩余 {item.FreeSpaceText}，最低保留 {item.MinimumFreeSpaceText}）", Value = item }));
+            disk = diskChoice?.Value as GameDiskItem;
+            if (disk is not null && _batchContext?.IsBatch == true) _batchContext.SelectedGameDiskId = disk.Id;
+        }
+        if (disk is null) { FailPendingVersionSwitch(); return; }
         var availableSpace = SpaceEstimationService.GetAvailableSpace(disk.RootPath);
         if (availableSpace < estimatedSpace + disk.MinimumFreeSpaceBytes)
         {
@@ -124,14 +132,14 @@ public partial class GameDetailWindow : Window
 
         var requiresSaveCopy = _game.HasLocalSave && CrossDiskSaveCopyService.RequiresCopy(_state, _game, disk);
         if (requiresSaveCopy && CrossDiskSaveCopyService.TargetCurrentExists(_game, disk)
-            && MessageBox.Show("目标游戏盘已经存在该游戏的 current 存档。按照需求，复制时将保留来源存档并覆盖目标存档。是否继续？", "跨游戏盘存档覆盖确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) { FailPendingVersionSwitch(); return; }
+            && ConfirmForBatch("覆盖目标存档", "目标游戏盘已经存在该游戏的 current 存档。按照需求，复制时将保留来源存档并覆盖目标存档。是否继续？", "跨游戏盘存档覆盖确认", MessageBoxImage.Warning) != MessageBoxResult.Yes) { FailPendingVersionSwitch(); return; }
         if (_game.HasLocalSave)
         {
             try
             {
                 var manifest = await CurrentSaveManifestService.LoadAsync(_state, _game);
                 if (manifest is not null && manifest.GameVersionId != Guid.Empty && manifest.GameVersionId != version.Id
-                    && MessageBox.Show($"当前共享存档来自其他版本。\n\n来源版本 ID：{manifest.GameVersionId}\n目标版本：{version.VersionName}\n\n跨版本恢复可能不兼容，是否继续？", "共享存档兼容风险", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) { FailPendingVersionSwitch(); return; }
+                    && ConfirmForBatch("跨版本恢复", $"当前共享存档来自其他版本。\n\n来源版本 ID：{manifest.GameVersionId}\n目标版本：{version.VersionName}\n\n跨版本恢复可能不兼容，是否继续？", "共享存档兼容风险", MessageBoxImage.Warning) != MessageBoxResult.Yes) { FailPendingVersionSwitch(); return; }
             }
             catch (Exception ex) { ShowError($"读取共享存档清单失败：{ex.Message}"); FailPendingVersionSwitch(); return; }
         }
@@ -145,7 +153,7 @@ public partial class GameDetailWindow : Window
         if (Directory.Exists(finalTarget)) { ShowError($"目标游戏目录已经存在：\n{finalTarget}"); FailPendingVersionSwitch(); return; }
         if (Directory.Exists(workRoot))
         {
-            if (MessageBox.Show($"检测到上次失败、中断或取消后保留的临时目录：\n{workRoot}\n\n重新准备需要永久删除该临时目录，是否继续？", "临时目录恢复", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) { FailPendingVersionSwitch(); return; }
+            if (ConfirmForBatch("清理旧临时目录", $"检测到上次失败、中断或取消后保留的临时目录：\n{workRoot}\n\n重新准备需要永久删除该临时目录，是否继续？", "临时目录恢复", MessageBoxImage.Warning) != MessageBoxResult.Yes) { FailPendingVersionSwitch(); return; }
             try { Directory.Delete(workRoot, true); }
             catch (Exception ex) { ShowError($"无法清理旧临时目录：{ex.Message}"); FailPendingVersionSwitch(); return; }
         }
@@ -307,7 +315,7 @@ public partial class GameDetailWindow : Window
                 if (Directory.Exists(workRoot)) Directory.Delete(workRoot, true);
                 task.WorkingDirectory = string.Empty; _save("成功任务临时目录已自动清理");
                 RestoreAfterProgressDialog(progress);
-                MessageBox.Show(DialogOwner, "游戏准备完成。", "准备游玩", MessageBoxButton.OK, MessageBoxImage.Information);
+                if (_batchContext?.IsBatch != true) MessageBox.Show(DialogOwner, "游戏准备完成。", "准备游玩", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception cleanupError)
             {
@@ -677,7 +685,7 @@ public partial class GameDetailWindow : Window
             }
 
             if (readiness.RequiresNoSaveConfirmation
-                && MessageBox.Show("该游戏当前没有运行，并且没有可校验的存档清单。\n\n确认直接归档吗？此操作不会保存任何尚未收集的游戏存档。", "无存档清单归档确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                && ConfirmForBatch("无存档清单直接归档", "该游戏当前没有运行，并且没有可校验的存档清单。\n\n确认直接归档吗？此操作不会保存任何尚未收集的游戏存档。", "无存档清单归档确认", MessageBoxImage.Warning) != MessageBoxResult.Yes)
             {
                 task.Status = "已取消"; task.Message = "用户取消了未运行游戏的直接归档"; task.CompletedAt = DateTime.Now;
                 _game.Status = "可游玩"; _save(task.Message); RefreshBindings();
@@ -686,7 +694,7 @@ public partial class GameDetailWindow : Window
 
             OrdinaryArchiveService.MarkArchived(_game, readiness.Manifest);
             task.Progress = 80; task.Message = "归档条件已满足，游戏已标记为已归档"; _save(task.Message); RefreshBindings();
-            var delete = MessageBox.Show($"游戏已经成功归档。是否将当前可游玩目录移入 Windows 回收站以释放空间？\n\n{_game.PlayableRootPath}", "归档目录清理确认", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+            var delete = ConfirmForBatch("归档后清理可游玩目录", $"游戏已经成功归档。是否将当前可游玩目录移入 Windows 回收站以释放空间？\n\n{_game.PlayableRootPath}", "归档目录清理确认", MessageBoxImage.Question) == MessageBoxResult.Yes;
             if (!delete)
             {
                 task.Status = "完成"; task.Progress = 100; task.Message = "归档完成，游戏目录按用户选择保留"; task.CompletedAt = DateTime.Now; _save(task.Message); RefreshBindings();
@@ -726,9 +734,9 @@ public partial class GameDetailWindow : Window
             if (!_game.SystemSaveInitialScanCompleted) SystemSaveMonitoringService.MarkInitialScanCompleted(_game);
             return true;
         }
-        var answer = MessageBox.Show(DialogOwner,
+        var answer = ConfirmForBatch("是否存在系统存档",
             "首次自动匹配没有找到系统存档目录。该游戏是否存在 Windows 系统目录存档？\n\n选择“是”后请人工选择存档文件夹；选择“否”将只处理游戏目录存档。",
-            "确认系统存档", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+            "确认系统存档", MessageBoxImage.Question, MessageBoxButton.YesNoCancel);
         if (answer == MessageBoxResult.Cancel) return false;
         if (answer == MessageBoxResult.No) { SystemSaveMonitoringService.MarkInitialScanCompleted(_game); return true; }
         var dialog = new OpenFolderDialog { Title = "选择该游戏的系统存档文件夹", Multiselect = false };
@@ -817,6 +825,16 @@ public partial class GameDetailWindow : Window
         DataContext = null; DataContext = _game; Title = $"游戏详情 - {_game.DisplayName}";
     }
 
+    private string BatchPromptSuffix() => _batchContext?.IsBatch == true ? "\n\n本次选择将应用到本批次所有游戏。" : string.Empty;
+
+    private MessageBoxResult ConfirmForBatch(string key, string message, string title, MessageBoxImage image, MessageBoxButton buttons = MessageBoxButton.YesNo)
+    {
+        if (_batchContext?.IsBatch == true && _batchContext.Confirmations.TryGetValue(key, out var saved)) return saved;
+        var result = MessageBox.Show(DialogOwner, message + BatchPromptSuffix(), title, buttons, image);
+        if (_batchContext?.IsBatch == true) _batchContext.Confirmations[key] = result;
+        return result;
+    }
+
     private ChoiceItem? SelectChoice(string title, string prompt, IEnumerable<ChoiceItem> choices)
     {
         var materialized = choices.ToList();
@@ -831,21 +849,35 @@ public partial class GameDetailWindow : Window
         var recordedGroup = recordedPath is null ? null : groups.FirstOrDefault(group => group.Files.Any(path => PathsEqual(path, recordedPath)) || PathsEqual(group.EntryPath, recordedPath));
         if (recordedGroup is not null && ConfirmHistoryReplay(stepName, recordedGroup.EntryPath, allowAutoReplayFollowingSteps)) return recordedGroup;
 
+        if (_batchContext?.IsBatch == true && _batchContext.ArchiveEntryNames.TryGetValue(stepName, out var savedName))
+        {
+            var savedGroup = groups.FirstOrDefault(group => Path.GetFileName(group.EntryPath).Equals(savedName, StringComparison.OrdinalIgnoreCase));
+            if (savedGroup is not null) return savedGroup;
+        }
+
         var choices = groups.Select(group => new ChoiceItem
         {
             Name = Path.GetFileName(group.EntryPath),
             Description = $"{group.Format}｜{group.VolumeSummary}｜{Models.SizeFormatter.Format(group.TotalSize)}｜{(group.MissingFiles.Count == 0 ? "分卷完整" : $"缺失 {group.MissingFiles.Count} 卷")}｜{group.EntryPath}",
             Value = group
         });
-        return SelectChoice(title, prompt, choices)?.Value as ArchiveVolumeGroup;
+        var selected = SelectChoice(title, prompt + BatchPromptSuffix(), choices)?.Value as ArchiveVolumeGroup;
+        if (selected is not null && _batchContext?.IsBatch == true) _batchContext.ArchiveEntryNames[stepName] = Path.GetFileName(selected.EntryPath);
+        return selected;
     }
 
     private bool ConfirmHistoryReplay(string stepName, string archivePath, bool allowAutoReplayFollowingSteps = false)
     {
         if (_autoReplayRemainingHistory) return true;
+        if (_batchContext?.IsBatch == true && _batchContext.HistoryReplayDecisions.TryGetValue(stepName, out var saved))
+        {
+            if (saved.UseHistory && allowAutoReplayFollowingSteps && saved.AutoReplayFollowing) _autoReplayRemainingHistory = true;
+            return saved.UseHistory;
+        }
         var dialog = new HistoryReplayWindow(stepName, archivePath, allowAutoReplayFollowingSteps) { Owner = DialogOwner };
         var useHistory = dialog.ShowDialog() == true && dialog.UseHistory;
         if (useHistory && allowAutoReplayFollowingSteps && dialog.AutoReplayFollowingSteps) _autoReplayRemainingHistory = true;
+        if (_batchContext?.IsBatch == true) _batchContext.HistoryReplayDecisions[stepName] = (useHistory, dialog.AutoReplayFollowingSteps);
         return useHistory;
     }
 
@@ -853,7 +885,7 @@ public partial class GameDetailWindow : Window
     {
         if (group.MissingFiles.Count == 0) return;
         var missing = string.Join("\n", group.MissingFiles.Select(Path.GetFileName));
-        var result = MessageBox.Show($"{stepName}分卷组存在可推断的缺失文件：\n{missing}\n\n按照需求，只允许在人工确认后尝试解压一次；失败后立即停止，不重试密码，也不继续后续步骤。是否仍要尝试？", "分卷缺失确认", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        var result = ConfirmForBatch($"{stepName}缺失分卷", $"{stepName}分卷组存在可推断的缺失文件：\n{missing}\n\n按照需求，只允许在人工确认后尝试解压一次；失败后立即停止，不重试密码，也不继续后续步骤。是否仍要尝试？", "分卷缺失确认", MessageBoxImage.Warning);
         if (result != MessageBoxResult.Yes) throw new OperationCanceledException("用户取消了缺失分卷解压尝试。");
     }
 
@@ -878,6 +910,11 @@ public partial class GameDetailWindow : Window
         }
 
         if (discovery.Candidates.Count == 1) return new GameLaunchSelection(discovery.GameRoot, discovery.Candidates[0].Path);
+        if (_batchContext?.IsBatch == true && !string.IsNullOrWhiteSpace(_batchContext.LaunchFileRelativePath))
+        {
+            var savedPath = Path.GetFullPath(Path.Combine(discovery.GameRoot, _batchContext.LaunchFileRelativePath));
+            if (discovery.Candidates.Any(candidate => PathsEqual(candidate.Path, savedPath))) return new GameLaunchSelection(discovery.GameRoot, savedPath);
+        }
         var choices = discovery.Candidates.Select((candidate, index) => new ChoiceItem
         {
             Name = $"{(index == 0 ? "推荐｜" : string.Empty)}{Path.GetFileName(candidate.Path)}",
@@ -887,7 +924,9 @@ public partial class GameDetailWindow : Window
         var window = new ChoiceWindow("选择游戏启动文件", $"已确定游戏目录：\n{discovery.GameRoot}\n\n候选按评分从高到低排列。请选择目录直属的 EXE/index.html，或手动选择文件：", choices, true) { Owner = DialogOwner };
         if (window.ShowDialog() != true) return null;
         if (window.ManualSelectionRequested) return SelectManualLaunchFile(searchRoot);
-        return window.SelectedChoice?.Value is string launchFile ? new GameLaunchSelection(discovery.GameRoot, launchFile) : null;
+        if (window.SelectedChoice?.Value is not string launchFile) return null;
+        if (_batchContext?.IsBatch == true) _batchContext.LaunchFileRelativePath = Path.GetRelativePath(discovery.GameRoot, launchFile);
+        return new GameLaunchSelection(discovery.GameRoot, launchFile);
     }
 
     private GameLaunchSelection? SelectManualLaunchFile(string searchRoot)
@@ -1004,12 +1043,15 @@ public partial class GameDetailWindow : Window
 
     private string? PromptPassword(string title, string archivePath, string? existingPassword, PreparationProgressWindow progress)
     {
+        var passwordKey = title.Contains("第一次", StringComparison.Ordinal) ? "第一次解压密码" : "第二次解压密码";
+        if (existingPassword is null && _batchContext?.IsBatch == true && _batchContext.Passwords.TryGetValue(passwordKey, out var savedPassword)) return savedPassword;
         progress.Hide(); IsEnabled = true;
         try
         {
             var window = new PasswordInputWindow(title, Path.GetFileName(archivePath), existingPassword, CredentialService.GetPasswordHistory(_state)) { Owner = DialogOwner };
             if (window.ShowDialog() != true) return null;
             CredentialService.AddPasswordHistory(_state, window.Password);
+            if (_batchContext?.IsBatch == true) _batchContext.Passwords[passwordKey] = window.Password;
             _save("解压密码历史已更新");
             return window.Password;
         }

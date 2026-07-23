@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using System.IO;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using GameManagement.Services;
 
 namespace GameManagement.Models;
@@ -31,6 +32,17 @@ public sealed class AppState
 public sealed class UiSettingsItem
 {
     public string ThemeName { get; set; } = ThemeNames.Classic;
+}
+
+public sealed class BatchOperationContext
+{
+    public bool IsBatch { get; init; }
+    public Guid? SelectedGameDiskId { get; set; }
+    public Dictionary<string, MessageBoxResult> Confirmations { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string> ArchiveEntryNames { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string> Passwords { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, (bool UseHistory, bool AutoReplayFollowing)> HistoryReplayDecisions { get; } = new(StringComparer.Ordinal);
+    public string? LaunchFileRelativePath { get; set; }
 }
 
 public sealed class ScanPathItem

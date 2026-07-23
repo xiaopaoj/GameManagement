@@ -3,6 +3,7 @@ using GameManagement.Services;
 using GameManagement.ViewModels;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Windows;
 
 namespace GameManagement.Tests;
 
@@ -799,6 +800,23 @@ public sealed class ModelTests
         var addMethod = viewModelSource[viewModelSource.IndexOf("private async Task AddCandidatesToLibraryAsync", StringComparison.Ordinal)..viewModelSource.IndexOf("public static string GetCandidateDisplayName", StringComparison.Ordinal)];
         Assert.Contains("progressWindow.Show();", addMethod);
         Assert.DoesNotContain("owner.IsEnabled = false", addMethod);
+    }
+
+    [Fact]
+    public void 批量操作上下文应保存统一提示选择和可复用准备参数()
+    {
+        var diskId = Guid.NewGuid();
+        var context = new BatchOperationContext { IsBatch = true, SelectedGameDiskId = diskId, LaunchFileRelativePath = "bin\\game.exe" };
+        context.Confirmations["归档后清理可游玩目录"] = MessageBoxResult.Yes;
+        context.ArchiveEntryNames["第一次解压"] = "game.part1.rar";
+        context.Passwords["第一次解压密码"] = "password";
+        context.HistoryReplayDecisions["第一次解压"] = (true, true);
+
+        Assert.Equal(diskId, context.SelectedGameDiskId);
+        Assert.Equal(MessageBoxResult.Yes, context.Confirmations["归档后清理可游玩目录"]);
+        Assert.Equal("game.part1.rar", context.ArchiveEntryNames["第一次解压"]);
+        Assert.Equal("password", context.Passwords["第一次解压密码"]);
+        Assert.True(context.HistoryReplayDecisions["第一次解压"].AutoReplayFollowing);
     }
 
     [Fact]

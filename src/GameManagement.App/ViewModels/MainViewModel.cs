@@ -455,12 +455,14 @@ public sealed class MainViewModel : ObservableObject
     {
         if (games.Count == 0 || action is not ("准备游玩" or "归档游戏")) return;
         StatusMessage = $"已将 {games.Count} 个游戏加入“{action}”后台队列";
+        var batchContext = new BatchOperationContext { IsBatch = true };
         foreach (var game in games.DistinctBy(item => item.Id))
         {
-            var actionHost = new GameDetailWindow(game, _state, SaveAndRefreshGameLibrary, OnGameStateChanged, directActionHost: true) { Owner = Application.Current.MainWindow };
+            var actionHost = new GameDetailWindow(game, _state, SaveAndRefreshGameLibrary, OnGameStateChanged, directActionHost: true, batchContext: batchContext) { Owner = Application.Current.MainWindow };
             await actionHost.ExecuteBackgroundActionAsync(action);
         }
         SaveAndRefreshGameLibrary($"批量{action}队列处理完成");
+        MessageBox.Show(Application.Current.MainWindow, $"所选 {games.Count} 个游戏的“{action}”后台队列已经处理完成。", "批量操作完成", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     public void OpenExtractionTemplates() => new ExtractionTemplateWindow(_state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();
