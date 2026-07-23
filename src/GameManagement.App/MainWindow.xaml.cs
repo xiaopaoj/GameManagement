@@ -26,9 +26,12 @@ public partial class MainWindow : Window
         while (current is not null && current is not System.Windows.Controls.DataGridRow) current = VisualTreeHelper.GetParent(current);
         if (current is System.Windows.Controls.DataGridRow row)
         {
-            if (!row.IsSelected) GameGrid.SelectedItems.Clear();
-            GameGrid.SelectedItem = row.Item;
-            row.IsSelected = true;
+            if (!row.IsSelected)
+            {
+                GameGrid.SelectedItems.Clear();
+                GameGrid.SelectedItem = row.Item;
+                row.IsSelected = true;
+            }
         }
     }
 

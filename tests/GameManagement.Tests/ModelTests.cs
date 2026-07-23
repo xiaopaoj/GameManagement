@@ -790,6 +790,8 @@ public sealed class ModelTests
         var viewModelSource = File.ReadAllText(Path.Combine(appRoot, "ViewModels", "MainViewModel.cs"));
 
         Assert.Contains("SelectionMode=\"Extended\"", xaml);
+        Assert.Contains("if (!row.IsSelected)", windowSource);
+        Assert.DoesNotContain("if (!row.IsSelected) GameGrid.SelectedItems.Clear();\n            GameGrid.SelectedItem = row.Item;", windowSource.Replace("\r\n", "\n"));
         Assert.Contains("ExecuteGamesActionAsync(games, action)", windowSource);
         Assert.Contains("SetGamesExtractionTemplate", windowSource);
         Assert.Contains("foreach (var game in games.DistinctBy", viewModelSource);
