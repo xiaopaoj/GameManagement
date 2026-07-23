@@ -311,7 +311,10 @@ public static class ArchiveExtractionService
         {
             Directory.CreateDirectory(outputDirectory);
             var outputRoot = Path.GetFullPath(outputDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            using var archive = ArchiveFactory.Open(readableArchivePath, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password });
+            using var readableStream = temporaryArchivePath is null ? null : new FileStream(readableArchivePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var archive = readableStream is null
+                ? ArchiveFactory.Open(readableArchivePath, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password })
+                : ArchiveFactory.Open(readableStream, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password });
             foreach (var entry in archive.Entries.Where(entry => !entry.IsDirectory))
             {
                 token.ThrowIfCancellationRequested();
@@ -330,7 +333,10 @@ public static class ArchiveExtractionService
         try
         {
             token.ThrowIfCancellationRequested();
-            using var archive = ArchiveFactory.Open(readableArchivePath, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password });
+            using var readableStream = temporaryArchivePath is null ? null : new FileStream(readableArchivePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var archive = readableStream is null
+                ? ArchiveFactory.Open(readableArchivePath, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password })
+                : ArchiveFactory.Open(readableStream, new ReaderOptions { Password = string.IsNullOrEmpty(password) ? null : password });
             var entry = archive.Entries.FirstOrDefault(item => !item.IsDirectory);
             if (entry is null) return;
             using var stream = entry.OpenEntryStream();

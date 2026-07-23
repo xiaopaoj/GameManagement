@@ -410,10 +410,42 @@ public static partial class ArchiveVolumeService
         var max = matches.Count == 0 ? expectedStart : matches.Max(item => item.Number);
         var width = matches.Count == 0 ? 2 : matches.Max(item => item.Width);
         var existing = matches.Select(item => item.Number).ToHashSet();
-        var missing = Enumerable.Range(expectedStart, max - expectedStart + 1).Where(number => !existing.Contains(number))
+        var expectedMax = max;
+        if (kind.Equals("7z-parts", StringComparison.OrdinalIgnoreCase))
+        {
+            var firstPart = matches.FirstOrDefault(item => item.Number == expectedStart).Path;
+            if (firstPart is not null && TryReadSevenZipExpectedLength(firstPart, out var expectedLength))
+            {
+                var firstPartLength = new FileInfo(firstPart).Length;
+                if (firstPartLength > 0 && expectedLength > firstPartLength)
+                {
+                    var expectedPartCount = checked((int)Math.Min(int.MaxValue, (expectedLength + firstPartLength - 1) / firstPartLength));
+                    expectedMax = Math.Max(expectedMax, expectedStart + expectedPartCount - 1);
+                }
+            }
+        }
+        var missing = Enumerable.Range(expectedStart, expectedMax - expectedStart + 1).Where(number => !existing.Contains(number))
             .Select(number => Path.Combine(directory, $"{baseName}{middle}{number.ToString($"D{width}")}{suffix}")).ToList();
         var entry = matches.FirstOrDefault(item => item.Number == expectedStart).Path ?? matches.FirstOrDefault().Path ?? Path.Combine(directory, $"{baseName}{middle}{expectedStart.ToString($"D{width}")}{suffix}");
         return new ArchiveVolumeGroup { GroupKey = Path.Combine(directory, $"{kind}:{baseName}"), VolumeKind = kind, EntryPath = entry, Format = format, Files = matches.Select(item => Path.GetFullPath(item.Path)).ToList(), MissingFiles = missing };
+    }
+
+    private static bool TryReadSevenZipExpectedLength(string firstPartPath, out long expectedLength)
+    {
+        expectedLength = 0;
+        try
+        {
+            Span<byte> header = stackalloc byte[32];
+            using var stream = new FileStream(firstPartPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            if (stream.Read(header) != header.Length || !header[..6].SequenceEqual(new byte[] { 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C })) return false;
+            var nextHeaderOffset = BitConverter.ToUInt64(header[12..20]);
+            var nextHeaderSize = BitConverter.ToUInt64(header[20..28]);
+            var total = checked(32UL + nextHeaderOffset + nextHeaderSize);
+            if (total > long.MaxValue) return false;
+            expectedLength = (long)total;
+            return expectedLength >= 32;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OverflowException) { return false; }
     }
 
     private static ArchiveVolumeGroup BuildOldRarGroup(string directory, string baseName)

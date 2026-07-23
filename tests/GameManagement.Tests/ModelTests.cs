@@ -430,6 +430,34 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 分卷7Z应根据首卷头部发现末尾缺失卷()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var part1 = Path.Combine(root, "large-game.7z.001");
+            var header = new byte[32];
+            new byte[] { 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C }.CopyTo(header, 0);
+            BitConverter.GetBytes(180UL).CopyTo(header, 12);
+            BitConverter.GetBytes(20UL).CopyTo(header, 20);
+            using (var stream = File.Create(part1))
+            {
+                stream.Write(header);
+                stream.SetLength(100);
+            }
+
+            var group = ArchiveVolumeService.BuildGroup(part1);
+
+            Assert.Equal("7z-parts", group.VolumeKind);
+            Assert.Equal(2, group.MissingFiles.Count);
+            Assert.EndsWith("large-game.7z.002", group.MissingFiles[0], StringComparison.OrdinalIgnoreCase);
+            Assert.EndsWith("large-game.7z.003", group.MissingFiles[1], StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task 单个分卷入口来源应复制整组分卷并计算整组元数据()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
