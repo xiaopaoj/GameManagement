@@ -259,9 +259,9 @@ public partial class GameDetailWindow : Window
             }
 
             UpdatePreparationTask(task, progress, 75, "正在递归查找第一个有效 EXE 并确定游戏目录…", finalExtractionRoot, "等待确认游戏目录");
-            var launchDiscovery = await Task.Run(() => ExecutableDiscoveryService.Discover(finalExtractionRoot, cancellation.Token), cancellation.Token);
+            var launchDiscovery = await Task.Run(() => ExecutableDiscoveryService.Discover(finalExtractionRoot, cancellation.Token, _state.UiSettings.ExecutableIgnoreNames), cancellation.Token);
             progress.Hide(); IsEnabled = true;
-            var launchSelection = ExecutableDiscoveryService.ResolveRecordedSelection(finalExtractionRoot, version.ExecutableRelativePath, launchDiscovery?.GameRoot);
+            var launchSelection = ExecutableDiscoveryService.ResolveRecordedSelection(finalExtractionRoot, version.ExecutableRelativePath, launchDiscovery?.GameRoot, _state.UiSettings.ExecutableIgnoreNames);
             if (launchSelection is null && launchDiscovery?.Candidates.Count == 1)
                 launchSelection = new GameLaunchSelection(launchDiscovery.GameRoot, launchDiscovery.Candidates[0].Path);
             if (launchDiscovery is null)
@@ -508,7 +508,7 @@ public partial class GameDetailWindow : Window
         try
         {
             IsEnabled = false;
-            var discovery = await Task.Run(() => ExecutableDiscoveryService.Discover(_game.PlayableRootPath));
+            var discovery = await Task.Run(() => ExecutableDiscoveryService.Discover(_game.PlayableRootPath, default, _state.UiSettings.ExecutableIgnoreNames));
             IsEnabled = true;
             var selection = SelectLaunchFile(_game.PlayableRootPath, discovery);
             if (selection is null) return;
@@ -794,7 +794,7 @@ public partial class GameDetailWindow : Window
         }
 
         task.Progress = 56; task.Message = "正在识别干净游戏目录"; task.CurrentPath = step2; progress.UpdateStatus(task.Message, 56);
-        var discovery = await Task.Run(() => ExecutableDiscoveryService.Discover(step2, token), token);
+        var discovery = await Task.Run(() => ExecutableDiscoveryService.Discover(step2, token, _state.UiSettings.ExecutableIgnoreNames), token);
         progress.Hide(); IsEnabled = true;
         var selection = SelectLaunchFile(step2, discovery) ?? throw new OperationCanceledException("用户取消干净游戏目录选择。", token);
         IsEnabled = false; progress.Show();
@@ -1078,7 +1078,7 @@ public partial class GameDetailWindow : Window
         if (!string.IsNullOrWhiteSpace(_game.PlayableRootPath) && !string.IsNullOrWhiteSpace(_game.ExecutableRelativePath)
             && File.Exists(Path.Combine(_game.PlayableRootPath, _game.ExecutableRelativePath))) return true;
         if (string.IsNullOrWhiteSpace(_game.PlayableRootPath) || !Directory.Exists(_game.PlayableRootPath)) { ShowError("该游戏尚未准备完成。"); return false; }
-        var discovery = ExecutableDiscoveryService.Discover(_game.PlayableRootPath);
+        var discovery = ExecutableDiscoveryService.Discover(_game.PlayableRootPath, default, _state.UiSettings.ExecutableIgnoreNames);
         var selection = SelectLaunchFile(_game.PlayableRootPath, discovery);
         if (selection is null) return false;
         var relativePath = Path.GetRelativePath(_game.PlayableRootPath, selection.LaunchFile);

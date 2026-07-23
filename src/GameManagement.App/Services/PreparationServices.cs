@@ -374,15 +374,10 @@ public static class ArchiveExtractionService
 
 public static class ExecutableDiscoveryService
 {
-    private static readonly HashSet<string> ExcludedNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "UnityCrashHandler.exe", "UnityCrashHandler64.exe", "CrashReportClient.exe", "UE4PrereqSetup_x64.exe",
-        "UEPrereqSetup_x64.exe", "unins000.exe", "uninstall.exe", "setup.exe", "vc_redist.x64.exe", "DXSETUP.exe"
-    };
-
-    public static GameLaunchDiscoveryResult? Discover(string rootDirectory, CancellationToken token = default)
+    public static GameLaunchDiscoveryResult? Discover(string rootDirectory, CancellationToken token = default, IEnumerable<string>? ignoredFileNames = null)
     {
         if (!Directory.Exists(rootDirectory)) return null;
+        var excludedNames = NormalizeIgnoreNames(ignoredFileNames);
         var pending = new Queue<string>();
         pending.Enqueue(rootDirectory);
         while (pending.Count > 0)
@@ -399,13 +394,14 @@ public static class ExecutableDiscoveryService
             catch (UnauthorizedAccessException) { continue; }
             catch (IOException) { continue; }
 
-            if (directExecutables.Any(path => !ExcludedNames.Contains(Path.GetFileName(path))))
+            if (directExecutables.Any(path => !excludedNames.Contains(Path.GetFileName(path))))
             {
                 var launchFiles = directExecutables
+                    .Where(path => !excludedNames.Contains(Path.GetFileName(path)))
                     .Concat(EnumerateIndexFiles(directory))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
-                var candidates = ScoreCandidates(directory, launchFiles);
+                var candidates = ScoreCandidates(directory, launchFiles, excludedNames);
                 return new GameLaunchDiscoveryResult(directory, candidates);
             }
 
@@ -418,8 +414,9 @@ public static class ExecutableDiscoveryService
         return null;
     }
 
-    public static IReadOnlyList<GameLaunchCandidate> ScoreCandidates(string gameRoot, IEnumerable<string> launchFiles)
+    public static IReadOnlyList<GameLaunchCandidate> ScoreCandidates(string gameRoot, IEnumerable<string> launchFiles, IEnumerable<string>? ignoredFileNames = null)
     {
+        var excludedNames = NormalizeIgnoreNames(ignoredFileNames);
         var directoryName = NormalizeName(new DirectoryInfo(gameRoot).Name);
         var files = launchFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var largestExeSize = files.Where(IsExecutable).Select(GetFileSize).DefaultIfEmpty(0).Max();
@@ -430,7 +427,7 @@ public static class ExecutableDiscoveryService
             var baseName = NormalizeName(Path.GetFileNameWithoutExtension(path));
             var reasons = new List<string>();
             var score = 0;
-            var excluded = IsExecutable(path) && ExcludedNames.Contains(fileName);
+            var excluded = IsExecutable(path) && excludedNames.Contains(fileName);
             if (IsExecutable(path)) { score += 100; reasons.Add("EXE 启动文件"); }
             else { score += 10; reasons.Add("网页入口"); }
             if (!string.IsNullOrWhiteSpace(directoryName) && baseName.Equals(directoryName, StringComparison.OrdinalIgnoreCase)) { score += 80; reasons.Add("名称与游戏目录一致"); }
@@ -450,9 +447,14 @@ public static class ExecutableDiscoveryService
             .ToList();
     }
 
-    public static bool IsExcludedExecutable(string path) => ExcludedNames.Contains(Path.GetFileName(path));
+    public static bool IsExcludedExecutable(string path, IEnumerable<string>? ignoredFileNames = null) => NormalizeIgnoreNames(ignoredFileNames).Contains(Path.GetFileName(path));
 
-    public static GameLaunchSelection? ResolveRecordedSelection(string searchRoot, string? executableRelativePath, string? preferredGameRoot = null)
+    private static HashSet<string> NormalizeIgnoreNames(IEnumerable<string>? ignoredFileNames) =>
+        new((ignoredFileNames ?? new UiSettingsItem().ExecutableIgnoreNames)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => Path.GetFileName(name.Trim())), StringComparer.OrdinalIgnoreCase);
+
+    public static GameLaunchSelection? ResolveRecordedSelection(string searchRoot, string? executableRelativePath, string? preferredGameRoot = null, IEnumerable<string>? ignoredFileNames = null)
     {
         if (string.IsNullOrWhiteSpace(executableRelativePath) || Path.IsPathFullyQualified(executableRelativePath)) return null;
         var normalizedRelativePath = executableRelativePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
@@ -474,7 +476,7 @@ public static class ExecutableDiscoveryService
             var candidate = Path.GetFullPath(Path.Combine(root, normalizedRelativePath));
             if (!candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(candidate)) continue;
             var valid = Path.GetExtension(candidate).Equals(".exe", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(candidate).Equals("index.html", StringComparison.OrdinalIgnoreCase);
-            if (valid) return new GameLaunchSelection(root, candidate);
+            if (valid && !IsExcludedExecutable(candidate, ignoredFileNames)) return new GameLaunchSelection(root, candidate);
         }
         return null;
     }

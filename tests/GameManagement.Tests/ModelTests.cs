@@ -546,8 +546,31 @@ public sealed class ModelTests
 
             Assert.NotNull(result);
             Assert.Equal(root, result.GameRoot);
-            Assert.Equal(2, result.LaunchFiles.Count);
+            Assert.Single(result.LaunchFiles);
             Assert.Contains(result.LaunchFiles, path => Path.GetFileName(path) == "Game.exe");
+            Assert.DoesNotContain(result.LaunchFiles, path => Path.GetFileName(path) == "UnityCrashHandler64.exe");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void EXE识别应应用用户维护的忽略清单()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var nested = Path.Combine(root, "nested");
+        Directory.CreateDirectory(nested);
+        try
+        {
+            File.WriteAllBytes(Path.Combine(root, "CUSTOMHELPER.EXE"), [1]);
+            var gameExe = Path.Combine(nested, "Game.exe");
+            File.WriteAllBytes(gameExe, [1, 2]);
+
+            var result = ExecutableDiscoveryService.Discover(root, default, ["customhelper.exe"]);
+
+            Assert.NotNull(result);
+            Assert.Equal(nested, result.GameRoot);
+            Assert.Single(result.LaunchFiles);
+            Assert.Equal(gameExe, result.LaunchFiles[0]);
         }
         finally { Directory.Delete(root, true); }
     }
@@ -612,6 +635,7 @@ public sealed class ModelTests
             Assert.Equal(gameRoot, result!.GameRoot, ignoreCase: true);
             Assert.Equal(executable, result.LaunchFile, ignoreCase: true);
             Assert.Null(ExecutableDiscoveryService.ResolveRecordedSelection(root, Path.Combine("bin", "missing.exe")));
+            Assert.Null(ExecutableDiscoveryService.ResolveRecordedSelection(root, Path.Combine("bin", "Game.exe"), ignoredFileNames: ["game.exe"]));
         }
         finally { Directory.Delete(root, true); }
     }
@@ -855,6 +879,26 @@ public sealed class ModelTests
         Assert.Contains("launchDiscovery?.Candidates.Count == 1", detailSource);
         Assert.Contains("if (!EnsureLaunchFileSelected()) return;", detailSource);
         Assert.Contains("if (!EnsureLaunchFileSelected(game, owner)) return;", viewModelSource);
+    }
+
+    [Fact]
+    public void 设置页应提供可维护的EXE忽略清单入口()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var dialogXaml = File.ReadAllText(Path.Combine(appRoot, "ExecutableIgnoreListWindow.xaml"));
+        var dialogSource = File.ReadAllText(Path.Combine(appRoot, "ExecutableIgnoreListWindow.xaml.cs"));
+        var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
+
+        Assert.Contains("EXE 忽略清单", mainXaml);
+        Assert.Contains("新增", dialogXaml);
+        Assert.Contains("编辑", dialogXaml);
+        Assert.Contains("删除", dialogXaml);
+        Assert.Contains("ExecutableIgnoreNames.Contains(name, StringComparer.OrdinalIgnoreCase)", dialogSource);
+        Assert.Contains("_state.UiSettings.ExecutableIgnoreNames", detailSource);
     }
 
     [Fact]

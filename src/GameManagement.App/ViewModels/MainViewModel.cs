@@ -493,7 +493,7 @@ public sealed class MainViewModel : ObservableObject
         if (!string.IsNullOrWhiteSpace(game.PlayableRootPath) && !string.IsNullOrWhiteSpace(game.ExecutableRelativePath)
             && File.Exists(Path.Combine(game.PlayableRootPath, game.ExecutableRelativePath))) return true;
         if (string.IsNullOrWhiteSpace(game.PlayableRootPath) || !Directory.Exists(game.PlayableRootPath)) { ShowError("该游戏尚未准备完成。"); return false; }
-        var discovery = ExecutableDiscoveryService.Discover(game.PlayableRootPath);
+        var discovery = ExecutableDiscoveryService.Discover(game.PlayableRootPath, default, _state.UiSettings.ExecutableIgnoreNames);
         if (discovery is null) { ShowError("游戏目录中没有找到有效的 EXE 或 index.html。"); return false; }
         string? launchFile;
         if (discovery.Candidates.Count == 1) launchFile = discovery.Candidates[0].Path;
@@ -515,6 +515,8 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public void OpenExtractionTemplates() => new ExtractionTemplateWindow(_state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();
+
+    public void OpenExecutableIgnoreList() => new ExecutableIgnoreListWindow(_state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();
 
     public IReadOnlyList<ExtractionTemplateItem> ExtractionTemplates => _state.ExtractionTemplates
         .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)

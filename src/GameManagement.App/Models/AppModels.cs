@@ -32,6 +32,11 @@ public sealed class AppState
 public sealed class UiSettingsItem
 {
     public string ThemeName { get; set; } = ThemeNames.Classic;
+    public List<string> ExecutableIgnoreNames { get; set; } =
+    [
+        "UnityCrashHandler.exe", "UnityCrashHandler64.exe", "CrashReportClient.exe", "UE4PrereqSetup_x64.exe",
+        "UEPrereqSetup_x64.exe", "unins000.exe", "uninstall.exe", "setup.exe", "vc_redist.x64.exe", "DXSETUP.exe"
+    ];
 }
 
 public sealed class BatchOperationContext

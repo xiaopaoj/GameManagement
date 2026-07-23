@@ -42,6 +42,13 @@ public sealed class StateStore
         try
         {
             var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(AppPaths.StateFile), Options) ?? new AppState();
+            state.UiSettings ??= new UiSettingsItem();
+            state.UiSettings.ExecutableIgnoreNames ??= new UiSettingsItem().ExecutableIgnoreNames;
+            state.UiSettings.ExecutableIgnoreNames = state.UiSettings.ExecutableIgnoreNames
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => Path.GetFileName(name.Trim()))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             foreach (var game in state.Games)
             {
                 if (game.AddedAt == default) game.AddedAt = ResolveAddedAt(game);
