@@ -163,7 +163,7 @@ public partial class GameDetailWindow : Window
         _state.OperationTasks.Add(task); _game.Status = "准备中"; _save("准备游玩任务已创建");
         var progress = new PreparationProgressWindow { Owner = DialogOwner };
         progress.EnableCancellation(cancellation.Cancel);
-        progress.Show(); IsEnabled = false;
+        ShowProgress(progress); IsEnabled = false;
         var finalCommitted = false;
         try
         {
@@ -195,7 +195,7 @@ public partial class GameDetailWindow : Window
             ConfirmMissingVolumes(firstGroup, "第一次解压");
             var firstArchive = firstGroup.EntryPath;
             var firstRelativePath = GetArchiveRelativePath(copiedSource, firstArchive);
-            IsEnabled = false; progress.Show();
+            IsEnabled = false; ShowProgress(progress);
             UpdatePreparationTask(task, progress, 35, $"正在执行第一次解压：{Path.GetFileName(firstArchive)}", firstArchive, "第一次解压中");
             await ExtractWithCredentialAsync(version, firstArchive, step1, "第一次解压密码", progress, cancellation.Token, 1, firstRelativePath, firstGroup.MissingFiles.Count == 0);
             version.FirstArchiveRelativePath = firstRelativePath;
@@ -210,7 +210,7 @@ public partial class GameDetailWindow : Window
             {
                 progress.Hide(); IsEnabled = true;
                 replayRecordedFallback = ConfirmHistoryReplay("第二次解压", recordedFallbackPath);
-                IsEnabled = false; progress.Show();
+                IsEnabled = false; ShowProgress(progress);
             }
             if (replayRecordedFallback && recordedFallbackPath is not null)
             {
@@ -232,7 +232,7 @@ public partial class GameDetailWindow : Window
                     var originalSecondArchive = secondGroup.EntryPath;
                     var secondRelativePath = Path.GetRelativePath(step1, originalSecondArchive);
                     var detectedFormat = secondGroup.Format;
-                    IsEnabled = false; progress.Show();
+                    IsEnabled = false; ShowProgress(progress);
                     var workingSecondArchive = originalSecondArchive;
                     if (!secondGroup.IsMultiVolume)
                     {
@@ -268,7 +268,7 @@ public partial class GameDetailWindow : Window
                 launchSelection = SelectLaunchFile(finalExtractionRoot, null) ?? throw new OperationCanceledException("用户取消了启动文件选择。", cancellation.Token);
             var selectedGameRoot = launchSelection?.GameRoot ?? launchDiscovery!.GameRoot;
 
-            IsEnabled = false; progress.Show(); UpdatePreparationTask(task, progress, 85, "正在直接提交最终游戏目录…", selectedGameRoot, "等待确认游戏目录");
+            IsEnabled = false; ShowProgress(progress); UpdatePreparationTask(task, progress, 85, "正在直接提交最终游戏目录…", selectedGameRoot, "等待确认游戏目录");
             var executableRelativePath = launchSelection is null ? null : Path.GetRelativePath(selectedGameRoot, launchSelection.LaunchFile);
             version.ExecutableRelativePath = executableRelativePath;
 
@@ -388,7 +388,7 @@ public partial class GameDetailWindow : Window
         using var cancellation = new CancellationTokenSource();
         var progress = new PreparationProgressWindow("正在执行特殊归档") { Owner = DialogOwner };
         progress.EnableCancellation(cancellation.Cancel);
-        IsEnabled = false; progress.Show();
+        IsEnabled = false; ShowProgress(progress);
         try
         {
             Directory.CreateDirectory(workRoot);
@@ -410,7 +410,7 @@ public partial class GameDetailWindow : Window
             {
                 progress.Hide(); IsEnabled = true;
                 if (MessageBox.Show($"无法从原始压缩文件建立完整基线：\n{baselineError?.Message}\n\n是否进入“无完整基线”人工选择模式？软件不会自动判断，也不会在备份完成前删除目录。", "无完整基线", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) throw new OperationCanceledException("用户取消了无完整基线人工选择模式。", cancellation.Token);
-                IsEnabled = false; progress.Show();
+                IsEnabled = false; ShowProgress(progress);
                 differences = await SpecialArchiveComparisonService.BuildManualSelectionAsync(mixedRoot, cancellation.Token);
                 _game.SpecialArchiveBaselineStatus = "无完整基线";
             }
@@ -418,7 +418,7 @@ public partial class GameDetailWindow : Window
             progress.Hide(); IsEnabled = true;
             var selectionWindow = new SpecialArchiveSelectionWindow(differences, completeBaseline) { Owner = DialogOwner };
             if (selectionWindow.ShowDialog() != true) throw new OperationCanceledException("用户取消了特殊归档文件选择。", cancellation.Token);
-            IsEnabled = false; progress.Show();
+            IsEnabled = false; ShowProgress(progress);
             var candidates = SpecialArchiveComparisonService.CreateSaveCandidates(_game, version, mixedRoot, selectionWindow.SelectedFiles);
             _state.SaveCandidates.RemoveAll(item => item.GameId == _game.Id && item.SourceKind == "游戏目录");
             _state.SaveCandidates.AddRange(candidates);
@@ -447,7 +447,7 @@ public partial class GameDetailWindow : Window
                     MessageBox.Show($"特殊归档已经完成，但混乱目录未能进入回收站：{ex.Message}", "目录清理失败", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
-            IsEnabled = false; progress.Show();
+            IsEnabled = false; ShowProgress(progress);
             task.Status = "完成"; task.Progress = 100; task.Message = $"特殊归档完成，{_game.SpecialArchiveBaselineStatus}"; task.CompletedAt = DateTime.Now;
             if (Directory.Exists(workRoot)) Directory.Delete(workRoot, true);
             task.WorkingDirectory = string.Empty; _save(task.Message); RefreshBindings();
@@ -469,7 +469,7 @@ public partial class GameDetailWindow : Window
         var progress = new PreparationProgressWindow("正在创建并校验单游戏无密码 ZIP 备份") { Owner = DialogOwner };
         using var cancellation = new CancellationTokenSource();
         progress.EnableCancellation(cancellation.Cancel);
-        IsEnabled = false; progress.Show();
+        IsEnabled = false; ShowProgress(progress);
         try
         {
             var result = await ExternalBackupService.CreateManualGameBackupAsync(_state, _game, cancellation.Token);
@@ -768,7 +768,7 @@ public partial class GameDetailWindow : Window
         var firstGroup = SelectArchiveGroupWithHistory("特殊归档：第一次解压", "请选择用于构建干净基线的第一次压缩文件：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压", true);
         if (firstGroup is null) throw new OperationCanceledException("用户取消第一次解压选择。", token);
         ConfirmMissingVolumes(firstGroup, "第一次解压");
-        IsEnabled = false; progress.Show();
+        IsEnabled = false; ShowProgress(progress);
         task.Progress = 28; task.Message = "正在执行第一次解压"; task.CurrentPath = firstGroup.EntryPath; progress.UpdateStatus(task.Message, 28);
         var firstRelative = GetArchiveRelativePath(copiedSource, firstGroup.EntryPath);
         await ExtractWithCredentialAsync(version, firstGroup.EntryPath, step1, "特殊归档第一次解压密码", progress, token, 1, firstRelative, firstGroup.MissingFiles.Count == 0);
@@ -781,7 +781,7 @@ public partial class GameDetailWindow : Window
             var secondGroup = SelectArchiveGroupWithHistory("特殊归档：第二次解压", "请选择用于构建干净基线的第二次压缩文件：", secondGroups, step1, version.SecondArchiveRelativePath, "第二次解压");
             if (secondGroup is null) throw new OperationCanceledException("用户取消第二次解压选择。", token);
             ConfirmMissingVolumes(secondGroup, "第二次解压");
-            IsEnabled = false; progress.Show();
+            IsEnabled = false; ShowProgress(progress);
             var workingArchive = secondGroup.IsMultiVolume ? secondGroup.EntryPath : await ArchiveDiscoveryService.CreateNormalizedWorkingArchiveAsync(secondGroup.EntryPath, secondGroup.Format, token);
             task.Progress = 48; task.Message = "正在执行第二次解压"; task.CurrentPath = workingArchive; progress.UpdateStatus(task.Message, 48);
             await ExtractWithCredentialAsync(version, workingArchive, step2, "特殊归档第二次解压密码", progress, token, 2, Path.GetRelativePath(step1, secondGroup.EntryPath), secondGroup.MissingFiles.Count == 0);
@@ -797,7 +797,7 @@ public partial class GameDetailWindow : Window
         var discovery = await Task.Run(() => ExecutableDiscoveryService.Discover(step2, token, _state.UiSettings.ExecutableIgnoreNames), token);
         progress.Hide(); IsEnabled = true;
         var selection = SelectLaunchFile(step2, discovery) ?? throw new OperationCanceledException("用户取消干净游戏目录选择。", token);
-        IsEnabled = false; progress.Show();
+        IsEnabled = false; ShowProgress(progress);
         task.Progress = 62; task.Message = "正在复制干净基准目录"; task.CurrentPath = selection.GameRoot; progress.UpdateStatus(task.Message, 62);
         await SourceCopyService.CopyDirectoryAsync(selection.GameRoot, clean, token);
         return clean;
@@ -1059,7 +1059,7 @@ public partial class GameDetailWindow : Window
             _save("解压密码历史已更新");
             return window.Password;
         }
-        finally { IsEnabled = false; progress.Show(); }
+        finally { IsEnabled = false; ShowProgress(progress); }
     }
 
     private void UpdatePreparationTask(OperationTaskItem task, PreparationProgressWindow progress, int percentage, string message, string currentPath, string gameStatus)
@@ -1071,6 +1071,12 @@ public partial class GameDetailWindow : Window
             _batchContext.ReportProgress?.Invoke(overall, $"{_batchContext.CurrentIndex + 1}/{_batchContext.TotalCount}｜{_game.DisplayName}｜{percentage}%");
         }
         progress.UpdateStatus(message, percentage); _save($"准备任务进度：{percentage}%");
+    }
+
+    private void ShowProgress(PreparationProgressWindow progress)
+    {
+        if (_batchContext?.IsBatch == true) return;
+        progress.Show();
     }
 
     private bool EnsureLaunchFileSelected()

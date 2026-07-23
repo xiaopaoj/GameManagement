@@ -854,6 +854,10 @@ public sealed class ModelTests
         Assert.Contains("await actionHost.ExecuteBackgroundActionAsync(action)", viewModelSource);
         Assert.Contains("BatchProgressMessage", xaml);
         Assert.Contains("batchContext.ReportProgress", viewModelSource);
+        var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
+        Assert.Contains("if (_batchContext?.IsBatch == true) return;", detailSource);
+        Assert.Contains("ShowProgress(progress)", detailSource);
+        Assert.Equal(1, detailSource.Split("progress.Show();", StringSplitOptions.None).Length - 1);
         var addMethod = viewModelSource[viewModelSource.IndexOf("private async Task AddCandidatesToLibraryAsync", StringComparison.Ordinal)..viewModelSource.IndexOf("public static string GetCandidateDisplayName", StringComparison.Ordinal)];
         Assert.Contains("progressWindow.Show();", addMethod);
         Assert.DoesNotContain("owner.IsEnabled = false", addMethod);
