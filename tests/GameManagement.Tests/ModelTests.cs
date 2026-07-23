@@ -561,6 +561,44 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public async Task 检测到WinRAR时应支持静默后台解压()
+    {
+        if (!WinRarExtractionService.TryResolveExecutable(out _)) return;
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var source = Path.Combine(root, "source");
+        var output = Path.Combine(root, "output");
+        var archive = Path.Combine(root, "game.zip");
+        Directory.CreateDirectory(source);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(source, "game.exe"), "test");
+            ZipFile.CreateFromDirectory(source, archive);
+
+            await ArchiveExtractionService.ExtractAsync(archive, output, string.Empty, default, new UiSettingsItem { ExtractionEngine = ExtractionEngineNames.WinRar });
+
+            Assert.True(File.Exists(Path.Combine(output, "game.exe")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 设置页应提供解压引擎选择和密码参数风险说明()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var xaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var service = File.ReadAllText(Path.Combine(appRoot, "Services", "PreparationServices.cs"));
+
+        Assert.Contains("ExtractionEngineOptions", xaml);
+        Assert.Contains("瞬时命令行参数", xaml);
+        Assert.Contains("CreateNoWindow = true", service);
+        Assert.Contains("process.Kill(true)", service);
+        Assert.Contains("$\"-p{password}\"", service);
+    }
+
+    [Fact]
     public void EXE识别应排除辅助程序()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

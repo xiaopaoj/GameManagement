@@ -32,11 +32,19 @@ public sealed class AppState
 public sealed class UiSettingsItem
 {
     public string ThemeName { get; set; } = ThemeNames.Classic;
+    public string ExtractionEngine { get; set; } = ExtractionEngineNames.Auto;
     public List<string> ExecutableIgnoreNames { get; set; } =
     [
         "UnityCrashHandler.exe", "UnityCrashHandler64.exe", "CrashReportClient.exe", "UE4PrereqSetup_x64.exe",
         "UEPrereqSetup_x64.exe", "unins000.exe", "uninstall.exe", "setup.exe", "vc_redist.x64.exe", "DXSETUP.exe"
     ];
+}
+
+public static class ExtractionEngineNames
+{
+    public const string Auto = "自动选择";
+    public const string WinRar = "WinRAR";
+    public const string BuiltIn = "内置解压";
 }
 
 public sealed class BatchOperationContext

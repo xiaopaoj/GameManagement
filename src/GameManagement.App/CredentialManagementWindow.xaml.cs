@@ -74,7 +74,7 @@ public partial class CredentialManagementWindow : Window
         try
         {
             var password = CredentialService.Decrypt(Selected.Credential.EncryptedPassword, Selected.Credential.GameVersionId);
-            await ArchiveExtractionService.ValidatePasswordAsync(archivePath, password);
+            await ArchiveExtractionService.ValidatePasswordAsync(archivePath, password, default, _state.UiSettings);
             Selected.Credential.VerifiedAt = DateTime.Now; Selected.Credential.UpdatedAt = DateTime.Now; _save("解压密码重新验证成功");
             WindowInteractionService.RestoreBeforeDialog(this, progress);
             MessageBox.Show(this, "密码验证成功。", "重新验证", MessageBoxButton.OK, MessageBoxImage.Information); RefreshItems(Selected.Credential.Id);

@@ -981,7 +981,7 @@ public partial class GameDetailWindow : Window
 
         try
         {
-            await ArchiveExtractionService.ExtractAsync(archivePath, outputDirectory, password, token);
+            await ArchiveExtractionService.ExtractAsync(archivePath, outputDirectory, password, token, _state.UiSettings);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) when (!allowPasswordRetry)
@@ -995,7 +995,7 @@ public partial class GameDetailWindow : Window
             var replacement = PromptPassword($"{title}验证失败", archivePath, password, progress);
             if (replacement is null) throw;
             password = replacement;
-            await ArchiveExtractionService.ExtractAsync(archivePath, outputDirectory, password, token);
+            await ArchiveExtractionService.ExtractAsync(archivePath, outputDirectory, password, token, _state.UiSettings);
         }
         CredentialService.SavePassword(_state, version.Id, fingerprint, password, stepOrder, Path.GetFileName(archivePath), archiveRelativePath, DateTime.Now);
     }

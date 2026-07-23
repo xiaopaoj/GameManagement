@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.IO;
+using System.Diagnostics;
 using GameManagement.Models;
+using Microsoft.Win32;
 using SharpCompress.Archives;
 using SharpCompress.Common;
 using SharpCompress.Readers;
@@ -304,7 +306,14 @@ public static class SpaceEstimationService
 
 public static class ArchiveExtractionService
 {
-    public static Task ExtractAsync(string archivePath, string outputDirectory, string password, CancellationToken token = default) => Task.Run(() =>
+    public static async Task ExtractAsync(string archivePath, string outputDirectory, string password, CancellationToken token = default, UiSettingsItem? settings = null)
+    {
+        if (WinRarExtractionService.ShouldUse(settings, out var executablePath))
+        {
+            await WinRarExtractionService.ExtractAsync(executablePath, archivePath, outputDirectory, password, token);
+            return;
+        }
+        await Task.Run(() =>
     {
         var readableArchivePath = PrepareReadableArchive(archivePath, token, out var temporaryArchivePath);
         try
@@ -326,8 +335,16 @@ public static class ArchiveExtractionService
         }
         finally { DeleteTemporaryArchive(temporaryArchivePath); }
     }, token);
+    }
 
-    public static Task ValidatePasswordAsync(string archivePath, string password, CancellationToken token = default) => Task.Run(() =>
+    public static async Task ValidatePasswordAsync(string archivePath, string password, CancellationToken token = default, UiSettingsItem? settings = null)
+    {
+        if (WinRarExtractionService.ShouldUse(settings, out var executablePath))
+        {
+            await WinRarExtractionService.TestAsync(executablePath, archivePath, password, token);
+            return;
+        }
+        await Task.Run(() =>
     {
         var readableArchivePath = PrepareReadableArchive(archivePath, token, out var temporaryArchivePath);
         try
@@ -345,6 +362,7 @@ public static class ArchiveExtractionService
         }
         finally { DeleteTemporaryArchive(temporaryArchivePath); }
     }, token);
+    }
 
     private static string PrepareReadableArchive(string archivePath, CancellationToken token, out string? temporaryArchivePath)
     {
@@ -375,6 +393,97 @@ public static class ArchiveExtractionService
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
         try { File.Delete(path); }
         catch (Exception ex) { AppLogger.Error($"清理 7z 分卷临时合并文件失败：{path}", ex); }
+    }
+}
+
+public static class WinRarExtractionService
+{
+    public static bool ShouldUse(UiSettingsItem? settings, out string executablePath)
+    {
+        executablePath = string.Empty;
+        var engine = settings?.ExtractionEngine ?? ExtractionEngineNames.BuiltIn;
+        if (engine == ExtractionEngineNames.BuiltIn) return false;
+        if (TryResolveExecutable(out executablePath)) return true;
+        if (engine == ExtractionEngineNames.WinRar) throw new FileNotFoundException("设置要求使用 WinRAR，但未检测到 WinRAR.exe。请安装 WinRAR，或在设置中改为“自动选择/内置解压”。");
+        return false;
+    }
+
+    public static bool TryResolveExecutable(out string path)
+    {
+        var candidates = new List<string?>();
+        foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
+        {
+            try { candidates.Add(hive.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\WinRAR.exe")?.GetValue(null) as string); }
+            catch { }
+        }
+        candidates.AddRange(
+        [
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WinRAR", "WinRAR.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "WinRAR", "WinRAR.exe")
+        ]);
+        path = candidates.Where(candidate => !string.IsNullOrWhiteSpace(candidate))
+            .Select(candidate => candidate!.Trim().Trim('"'))
+            .FirstOrDefault(File.Exists) ?? string.Empty;
+        return path.Length > 0;
+    }
+
+    public static Task ExtractAsync(string executablePath, string archivePath, string outputDirectory, string password, CancellationToken token)
+    {
+        Directory.CreateDirectory(outputDirectory);
+        return RunAsync(executablePath, "x", archivePath, outputDirectory, password, token);
+    }
+
+    public static Task TestAsync(string executablePath, string archivePath, string password, CancellationToken token) =>
+        RunAsync(executablePath, "t", archivePath, null, password, token);
+
+    private static async Task RunAsync(string executablePath, string command, string archivePath, string? outputDirectory, string password, CancellationToken token)
+    {
+        var startInfo = new ProcessStartInfo(executablePath)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        startInfo.ArgumentList.Add(command);
+        startInfo.ArgumentList.Add("-ibck");
+        startInfo.ArgumentList.Add("-inul");
+        startInfo.ArgumentList.Add("-y");
+        startInfo.ArgumentList.Add("-o+");
+        startInfo.ArgumentList.Add(string.IsNullOrEmpty(password) ? "-p-" : $"-p{password}");
+        startInfo.ArgumentList.Add(archivePath);
+        if (!string.IsNullOrWhiteSpace(outputDirectory)) startInfo.ArgumentList.Add(Path.GetFullPath(outputDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar);
+
+        using var process = new Process { StartInfo = startInfo };
+        if (!process.Start()) throw new InvalidOperationException("无法启动 WinRAR 后台解压进程。");
+        var stdout = process.StandardOutput.ReadToEndAsync(token);
+        var stderr = process.StandardError.ReadToEndAsync(token);
+        try { await process.WaitForExitAsync(token); }
+        catch (OperationCanceledException)
+        {
+            try { if (!process.HasExited) process.Kill(true); } catch { }
+            throw;
+        }
+        var output = string.Join(Environment.NewLine, new[] { await stdout, await stderr }.Where(text => !string.IsNullOrWhiteSpace(text))).Trim();
+        if (process.ExitCode != 0) throw new InvalidDataException(BuildFailureMessage(process.ExitCode, output));
+    }
+
+    private static string BuildFailureMessage(int exitCode, string output)
+    {
+        var reason = exitCode switch
+        {
+            1 => "WinRAR 报告警告",
+            2 => "WinRAR 发生致命错误",
+            3 => "压缩包 CRC 校验失败，可能密码错误或文件损坏",
+            4 => "压缩包被锁定",
+            5 => "写入目标目录失败",
+            6 => "无法打开压缩文件",
+            10 => "未找到匹配的压缩内容",
+            11 => "密码错误",
+            _ => $"WinRAR 返回错误代码 {exitCode}"
+        };
+        return string.IsNullOrWhiteSpace(output) ? reason : $"{reason}：{output}";
     }
 }
 

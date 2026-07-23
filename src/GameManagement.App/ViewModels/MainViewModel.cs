@@ -523,6 +523,23 @@ public sealed class MainViewModel : ObservableObject
         .ToList();
 
     public IReadOnlyList<string> ThemeOptions { get; } = [ThemeNames.Classic, ThemeNames.Windows11];
+    public IReadOnlyList<string> ExtractionEngineOptions { get; } = [ExtractionEngineNames.Auto, ExtractionEngineNames.WinRar, ExtractionEngineNames.BuiltIn];
+
+    public string SelectedExtractionEngine
+    {
+        get => _state.UiSettings.ExtractionEngine;
+        set
+        {
+            if (!ExtractionEngineOptions.Contains(value) || value == _state.UiSettings.ExtractionEngine) return;
+            _state.UiSettings.ExtractionEngine = value;
+            Raise(); Raise(nameof(WinRarDetectionText));
+            Save($"解压引擎已切换为：{value}");
+        }
+    }
+
+    public string WinRarDetectionText => WinRarExtractionService.TryResolveExecutable(out var path)
+        ? $"已检测：{path}"
+        : SelectedExtractionEngine == ExtractionEngineNames.BuiltIn ? "当前仅使用内置解压" : "未检测到 WinRAR，自动模式将回退内置解压";
 
     public string SelectedTheme
     {

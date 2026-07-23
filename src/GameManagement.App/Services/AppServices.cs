@@ -43,6 +43,8 @@ public sealed class StateStore
         {
             var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(AppPaths.StateFile), Options) ?? new AppState();
             state.UiSettings ??= new UiSettingsItem();
+            if (state.UiSettings.ExtractionEngine is not (ExtractionEngineNames.Auto or ExtractionEngineNames.WinRar or ExtractionEngineNames.BuiltIn))
+                state.UiSettings.ExtractionEngine = ExtractionEngineNames.Auto;
             state.UiSettings.ExecutableIgnoreNames ??= new UiSettingsItem().ExecutableIgnoreNames;
             state.UiSettings.ExecutableIgnoreNames = state.UiSettings.ExecutableIgnoreNames
                 .Where(name => !string.IsNullOrWhiteSpace(name))
