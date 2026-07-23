@@ -1900,6 +1900,25 @@ public sealed class ModelTests
         Assert.Contains("x:Name=\"NoteText\"", editXaml);
     }
 
+    [Fact]
+    public void 详情与输入窗口应防止内容积压导致布局变形()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var detailXaml = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml"));
+        var inputXaml = File.ReadAllText(Path.Combine(appRoot, "TextInputWindow.xaml"));
+
+        Assert.Contains("<GridSplitter Grid.Row=\"1\"", detailXaml);
+        Assert.Contains("VerticalScrollBarVisibility=\"Auto\"", detailXaml);
+        Assert.Contains("MinHeight=\"150\"", detailXaml);
+        Assert.Contains("MaxHeight=\"132\"", detailXaml);
+        Assert.Contains("SizeToContent=\"Height\"", inputXaml);
+        Assert.Contains("<RowDefinition Height=\"Auto\"/><RowDefinition Height=\"Auto\"/><RowDefinition Height=\"Auto\"/>", inputXaml);
+        Assert.Contains("MinHeight=\"36\"", inputXaml);
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);
