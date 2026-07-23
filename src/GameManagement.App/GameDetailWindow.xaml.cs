@@ -236,10 +236,14 @@ public partial class GameDetailWindow : Window
                     var detectedFormat = secondGroup.Format;
                     IsEnabled = false; ShowProgress(progress);
                     var workingSecondArchive = originalSecondArchive;
-                    if (!secondGroup.IsMultiVolume)
+                    if (!secondGroup.IsMultiVolume && ArchiveExtractionService.RequiresNormalizedWorkingArchive(_state.UiSettings))
                     {
                         UpdatePreparationTask(task, progress, 60, $"正在定位真实 {detectedFormat} 数据并生成规范化临时文件…", originalSecondArchive, "第二次解压中");
                         workingSecondArchive = await ArchiveDiscoveryService.CreateNormalizedWorkingArchiveAsync(originalSecondArchive, detectedFormat, cancellation.Token);
+                    }
+                    else if (!secondGroup.IsMultiVolume)
+                    {
+                        UpdatePreparationTask(task, progress, 60, $"WinRAR 将直接读取原始混淆文件，跳过规范化复制：{Path.GetFileName(originalSecondArchive)}", originalSecondArchive, "第二次解压中");
                     }
                     UpdatePreparationTask(task, progress, 65, $"正在执行第二次解压：{Path.GetFileName(workingSecondArchive)}", workingSecondArchive, "第二次解压中");
                     await ExtractWithCredentialAsync(version, workingSecondArchive, step2, "第二次解压密码", progress, cancellation.Token, 2, secondRelativePath, secondGroup.MissingFiles.Count == 0);
@@ -785,7 +789,9 @@ public partial class GameDetailWindow : Window
             if (secondGroup is null) throw new OperationCanceledException("用户取消第二次解压选择。", token);
             ConfirmMissingVolumes(secondGroup, "第二次解压");
             IsEnabled = false; ShowProgress(progress);
-            var workingArchive = secondGroup.IsMultiVolume ? secondGroup.EntryPath : await ArchiveDiscoveryService.CreateNormalizedWorkingArchiveAsync(secondGroup.EntryPath, secondGroup.Format, token);
+            var workingArchive = secondGroup.EntryPath;
+            if (!secondGroup.IsMultiVolume && ArchiveExtractionService.RequiresNormalizedWorkingArchive(_state.UiSettings))
+                workingArchive = await ArchiveDiscoveryService.CreateNormalizedWorkingArchiveAsync(secondGroup.EntryPath, secondGroup.Format, token);
             task.Progress = 48; task.Message = "正在执行第二次解压"; task.CurrentPath = workingArchive; progress.UpdateStatus(task.Message, 48);
             await ExtractWithCredentialAsync(version, workingArchive, step2, "特殊归档第二次解压密码", progress, token, 2, Path.GetRelativePath(step1, secondGroup.EntryPath), secondGroup.MissingFiles.Count == 0);
         }

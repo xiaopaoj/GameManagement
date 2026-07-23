@@ -306,6 +306,8 @@ public static class SpaceEstimationService
 
 public static class ArchiveExtractionService
 {
+    public static bool RequiresNormalizedWorkingArchive(UiSettingsItem? settings) => !WinRarExtractionService.ShouldUse(settings, out _);
+
     public static async Task ExtractAsync(string archivePath, string outputDirectory, string password, CancellationToken token = default, UiSettingsItem? settings = null)
     {
         if (WinRarExtractionService.ShouldUse(settings, out var executablePath))

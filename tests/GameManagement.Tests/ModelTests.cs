@@ -1110,6 +1110,37 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public async Task WinRAR应直接解压混淆前缀文件而不生成规范化副本()
+    {
+        if (!WinRarExtractionService.TryResolveExecutable(out _)) return;
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var content = Path.Combine(root, "content");
+        var zip = Path.Combine(root, "source.zip");
+        var disguised = Path.Combine(root, "mixed.mp4");
+        var output = Path.Combine(root, "output");
+        Directory.CreateDirectory(content);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(content, "game.exe"), "test");
+            ZipFile.CreateFromDirectory(content, zip);
+            await using (var target = File.Create(disguised))
+            {
+                await target.WriteAsync(new byte[] { 0, 0, 0, 32, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D });
+                await using var source = File.OpenRead(zip);
+                await source.CopyToAsync(target);
+            }
+            var settings = new UiSettingsItem { ExtractionEngine = ExtractionEngineNames.WinRar };
+
+            Assert.False(ArchiveExtractionService.RequiresNormalizedWorkingArchive(settings));
+            await ArchiveExtractionService.ExtractAsync(disguised, output, string.Empty, default, settings);
+
+            Assert.True(File.Exists(Path.Combine(output, "game.exe")));
+            Assert.DoesNotContain(Directory.EnumerateFiles(root), path => Path.GetFileName(path).StartsWith(".normalized-", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task 增量比较应标记基线文件大型文件资源包和具体排除规则()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
