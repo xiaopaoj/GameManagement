@@ -161,7 +161,9 @@ public partial class GameDetailWindow : Window
         using var cancellation = new CancellationTokenSource();
         var task = new OperationTaskItem { Name = $"准备游戏：{_game.DisplayName}", TaskType = "准备游玩", GameId = _game.Id, GameVersionId = version.Id, Status = "运行中", Message = "正在初始化准备任务", WorkingDirectory = workRoot };
         _state.OperationTasks.Add(task); _game.Status = "准备中"; _save("准备游玩任务已创建");
-        var progress = new PreparationProgressWindow { Owner = DialogOwner };
+        var progress = _batchContext?.IsBatch == true
+            ? new PreparationProgressWindow(headless: true)
+            : new PreparationProgressWindow { Owner = DialogOwner };
         progress.EnableCancellation(cancellation.Cancel);
         ShowProgress(progress); IsEnabled = false;
         var finalCommitted = false;
@@ -188,7 +190,7 @@ public partial class GameDetailWindow : Window
             UpdatePreparationTask(task, progress, 25, "正在扫描第一次解压候选…", copiedSource, "第一次解压中");
             var firstGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(copiedSource, cancellation.Token), cancellation.Token);
             if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有发现 ZIP、RAR、7z 或可识别的分卷组。");
-            progress.Hide(); IsEnabled = true;
+            HideProgress(progress); IsEnabled = true;
             _autoReplayRemainingHistory = false;
             var firstGroup = SelectArchiveGroupWithHistory("选择第一次解压文件", "请选择第一次解压使用的 ZIP、RAR、7z 或分卷组：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压", true);
             if (firstGroup is null) throw new OperationCanceledException("用户取消了第一次解压文件选择。", cancellation.Token);
@@ -208,7 +210,7 @@ public partial class GameDetailWindow : Window
             var replayRecordedFallback = false;
             if (recordedFallbackPath is not null && File.Exists(recordedFallbackPath) && !string.IsNullOrWhiteSpace(version.SecondArchiveFormat))
             {
-                progress.Hide(); IsEnabled = true;
+                HideProgress(progress); IsEnabled = true;
                 replayRecordedFallback = ConfirmHistoryReplay("第二次解压", recordedFallbackPath);
                 IsEnabled = false; ShowProgress(progress);
             }
@@ -225,7 +227,7 @@ public partial class GameDetailWindow : Window
                 var secondGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(step1, cancellation.Token), cancellation.Token);
                 if (secondGroups.Count > 0)
                 {
-                    progress.Hide(); IsEnabled = true;
+                    HideProgress(progress); IsEnabled = true;
                     var secondGroup = SelectArchiveGroupWithHistory("选择第二次解压文件", "请选择第二次解压使用的 ZIP、RAR 或分卷组：", secondGroups, step1, version.SecondArchiveUsedFallback ? null : version.SecondArchiveRelativePath, "第二次解压");
                     if (secondGroup is null) throw new OperationCanceledException("用户取消了第二次解压文件选择。", cancellation.Token);
                     ConfirmMissingVolumes(secondGroup, "第二次解压");
@@ -260,7 +262,7 @@ public partial class GameDetailWindow : Window
 
             UpdatePreparationTask(task, progress, 75, "正在递归查找第一个有效 EXE 并确定游戏目录…", finalExtractionRoot, "等待确认游戏目录");
             var launchDiscovery = await Task.Run(() => ExecutableDiscoveryService.Discover(finalExtractionRoot, cancellation.Token, _state.UiSettings.ExecutableIgnoreNames), cancellation.Token);
-            progress.Hide(); IsEnabled = true;
+            HideProgress(progress); IsEnabled = true;
             var launchSelection = ExecutableDiscoveryService.ResolveRecordedSelection(finalExtractionRoot, version.ExecutableRelativePath, launchDiscovery?.GameRoot, _state.UiSettings.ExecutableIgnoreNames);
             if (launchSelection is null && launchDiscovery?.Candidates.Count == 1)
                 launchSelection = new GameLaunchSelection(launchDiscovery.GameRoot, launchDiscovery.Candidates[0].Path);
@@ -353,6 +355,7 @@ public partial class GameDetailWindow : Window
 
     private void RestoreAfterProgressDialog(PreparationProgressWindow progress)
     {
+        if (progress.IsHeadless) { DialogOwner.IsEnabled = true; return; }
         WindowInteractionService.RestoreBeforeDialog(DialogOwner, progress);
     }
 
@@ -408,14 +411,14 @@ public partial class GameDetailWindow : Window
             }
             else
             {
-                progress.Hide(); IsEnabled = true;
+                HideProgress(progress); IsEnabled = true;
                 if (MessageBox.Show($"无法从原始压缩文件建立完整基线：\n{baselineError?.Message}\n\n是否进入“无完整基线”人工选择模式？软件不会自动判断，也不会在备份完成前删除目录。", "无完整基线", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) throw new OperationCanceledException("用户取消了无完整基线人工选择模式。", cancellation.Token);
                 IsEnabled = false; ShowProgress(progress);
                 differences = await SpecialArchiveComparisonService.BuildManualSelectionAsync(mixedRoot, cancellation.Token);
                 _game.SpecialArchiveBaselineStatus = "无完整基线";
             }
 
-            progress.Hide(); IsEnabled = true;
+            HideProgress(progress); IsEnabled = true;
             var selectionWindow = new SpecialArchiveSelectionWindow(differences, completeBaseline) { Owner = DialogOwner };
             if (selectionWindow.ShowDialog() != true) throw new OperationCanceledException("用户取消了特殊归档文件选择。", cancellation.Token);
             IsEnabled = false; ShowProgress(progress);
@@ -431,7 +434,7 @@ public partial class GameDetailWindow : Window
             _game.ArchiveMessage = $"特殊归档完成；基线状态：{_game.SpecialArchiveBaselineStatus}。本地存档与清单已校验，未要求外部 ZIP 备份。";
             _save("特殊归档已完成，本次未校验外部 ZIP 备份");
 
-            progress.Hide(); IsEnabled = true;
+            HideProgress(progress); IsEnabled = true;
             if (MessageBox.Show($"特殊归档已完成。是否将所选混乱游戏目录移入 Windows 回收站？\n\n{mixedRoot}", "特殊归档目录清理确认", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             {
                 try
@@ -763,7 +766,7 @@ public partial class GameDetailWindow : Window
         task.Progress = 18; task.Message = "正在扫描第一次解压候选"; progress.UpdateStatus(task.Message, 18);
         var firstGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(copiedSource, token), token);
         if (firstGroups.Count == 0) throw new InvalidOperationException("原始来源中没有找到第一次解压使用的 ZIP、RAR、7z 或分卷组。");
-        progress.Hide(); IsEnabled = true;
+        HideProgress(progress); IsEnabled = true;
         _autoReplayRemainingHistory = false;
         var firstGroup = SelectArchiveGroupWithHistory("特殊归档：第一次解压", "请选择用于构建干净基线的第一次压缩文件：", firstGroups, copiedSource, version.FirstArchiveRelativePath, "第一次解压", true);
         if (firstGroup is null) throw new OperationCanceledException("用户取消第一次解压选择。", token);
@@ -777,7 +780,7 @@ public partial class GameDetailWindow : Window
         var secondGroups = await Task.Run(() => ArchiveVolumeService.DiscoverGroups(step1, token), token);
         if (secondGroups.Count > 0)
         {
-            progress.Hide(); IsEnabled = true;
+            HideProgress(progress); IsEnabled = true;
             var secondGroup = SelectArchiveGroupWithHistory("特殊归档：第二次解压", "请选择用于构建干净基线的第二次压缩文件：", secondGroups, step1, version.SecondArchiveRelativePath, "第二次解压");
             if (secondGroup is null) throw new OperationCanceledException("用户取消第二次解压选择。", token);
             ConfirmMissingVolumes(secondGroup, "第二次解压");
@@ -795,7 +798,7 @@ public partial class GameDetailWindow : Window
 
         task.Progress = 56; task.Message = "正在识别干净游戏目录"; task.CurrentPath = step2; progress.UpdateStatus(task.Message, 56);
         var discovery = await Task.Run(() => ExecutableDiscoveryService.Discover(step2, token, _state.UiSettings.ExecutableIgnoreNames), token);
-        progress.Hide(); IsEnabled = true;
+        HideProgress(progress); IsEnabled = true;
         var selection = SelectLaunchFile(step2, discovery) ?? throw new OperationCanceledException("用户取消干净游戏目录选择。", token);
         IsEnabled = false; ShowProgress(progress);
         task.Progress = 62; task.Message = "正在复制干净基准目录"; task.CurrentPath = selection.GameRoot; progress.UpdateStatus(task.Message, 62);
@@ -1049,7 +1052,7 @@ public partial class GameDetailWindow : Window
     {
         var passwordKey = title.Contains("第一次", StringComparison.Ordinal) ? "第一次解压密码" : "第二次解压密码";
         if (existingPassword is null && _batchContext?.IsBatch == true && _batchContext.Passwords.TryGetValue(passwordKey, out var savedPassword)) return savedPassword;
-        progress.Hide(); IsEnabled = true;
+        HideProgress(progress); IsEnabled = true;
         try
         {
             var window = new PasswordInputWindow(title, Path.GetFileName(archivePath), existingPassword, CredentialService.GetPasswordHistory(_state)) { Owner = DialogOwner };
@@ -1075,8 +1078,14 @@ public partial class GameDetailWindow : Window
 
     private void ShowProgress(PreparationProgressWindow progress)
     {
-        if (_batchContext?.IsBatch == true) return;
+        if (progress.IsHeadless) return;
         progress.Show();
+    }
+
+    private static void HideProgress(PreparationProgressWindow progress)
+    {
+        if (progress.IsHeadless) return;
+        progress.Hide();
     }
 
     private bool EnsureLaunchFileSelected()

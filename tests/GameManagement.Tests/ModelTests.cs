@@ -883,7 +883,9 @@ public sealed class ModelTests
         Assert.Contains("BatchProgressMessage", xaml);
         Assert.Contains("batchContext.ReportProgress", viewModelSource);
         var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
-        Assert.Contains("if (_batchContext?.IsBatch == true) return;", detailSource);
+        Assert.Contains("new PreparationProgressWindow(headless: true)", detailSource);
+        Assert.Contains("if (progress.IsHeadless) return;", detailSource);
+        Assert.Contains("if (progressWindow.IsHeadless) return;", File.ReadAllText(Path.Combine(appRoot, "Services", "WindowInteractionService.cs")));
         Assert.Contains("ShowProgress(progress)", detailSource);
         Assert.Equal(1, detailSource.Split("progress.Show();", StringSplitOptions.None).Length - 1);
         var addMethod = viewModelSource[viewModelSource.IndexOf("private async Task AddCandidatesToLibraryAsync", StringComparison.Ordinal)..viewModelSource.IndexOf("public static string GetCandidateDisplayName", StringComparison.Ordinal)];

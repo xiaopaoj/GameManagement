@@ -17,6 +17,7 @@ public static class WindowInteractionService
     public static void CompleteProgress(Window owner, PreparationProgressWindow progressWindow)
     {
         owner.IsEnabled = true;
+        if (progressWindow.IsHeadless) return;
         progressWindow.CloseSafely();
         _ = owner.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => Restore(owner)));
     }

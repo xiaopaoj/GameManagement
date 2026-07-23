@@ -8,15 +8,22 @@ public partial class PreparationProgressWindow : Window
     private Action? _cancel;
     private bool _allowClose;
     private bool _runInBackground;
-    public PreparationProgressWindow(string title = "正在准备游戏") { InitializeComponent(); Title = title; TitleText.Text = title; }
+    public bool IsHeadless { get; }
+    public PreparationProgressWindow(string title = "正在准备游戏", bool headless = false)
+    {
+        IsHeadless = headless;
+        if (headless) return;
+        InitializeComponent(); Title = title; TitleText.Text = title;
+    }
     public void UpdateStatus(string message, int? percentage = null)
     {
+        if (IsHeadless) return;
         StatusText.Text = message;
         Progress.IsIndeterminate = !percentage.HasValue;
         if (percentage.HasValue) Progress.Value = Math.Clamp(percentage.Value, 0, 100);
     }
-    public void EnableCancellation(Action cancel) { _cancel = cancel; CancelButton.Visibility = Visibility.Visible; }
-    public void CloseSafely() { _allowClose = true; Close(); }
+    public void EnableCancellation(Action cancel) { if (IsHeadless) return; _cancel = cancel; CancelButton.Visibility = Visibility.Visible; }
+    public void CloseSafely() { if (IsHeadless) return; _allowClose = true; Close(); }
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         if (_cancel is null) return;
