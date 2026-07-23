@@ -291,15 +291,18 @@ public sealed class ModelTests
     }
 
     [Fact]
-    public void 临时目录安全检查应只允许GameTemp和GameSaveTemp的子目录()
+    public void 临时目录安全检查应允许旧临时目录和游戏目录内的准备子目录()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         var disk = new GameDiskItem { RootPath = root };
 
         Assert.True(TemporaryDirectoryService.IsManagedTaskDirectory(Path.Combine(root, "GameTemp", "game-id", "version-id"), [disk]));
         Assert.True(TemporaryDirectoryService.IsManagedTaskDirectory(Path.Combine(root, "GameSaveTemp", "game-id"), [disk]));
+        Assert.True(TemporaryDirectoryService.IsManagedTaskDirectory(Path.Combine(root, "Games", "game-id", ".prepare"), [disk]));
+        Assert.True(TemporaryDirectoryService.IsManagedTaskDirectory(Path.Combine(root, "Games", "game-id", ".prepare", "step1"), [disk]));
         Assert.False(TemporaryDirectoryService.IsManagedTaskDirectory(Path.Combine(root, "GameTemp"), [disk]));
         Assert.False(TemporaryDirectoryService.IsManagedTaskDirectory(Path.Combine(root, "Games", "game-id"), [disk]));
+        Assert.False(TemporaryDirectoryService.IsManagedTaskDirectory(Path.Combine(root, "Games", "game-id", "content"), [disk]));
         Assert.False(TemporaryDirectoryService.IsManagedTaskDirectory(root, [disk]));
     }
 
@@ -823,11 +826,35 @@ public sealed class ModelTests
         Assert.DoesNotContain("if (!row.IsSelected) GameGrid.SelectedItems.Clear();\n            GameGrid.SelectedItem = row.Item;", windowSource.Replace("\r\n", "\n"));
         Assert.Contains("ExecuteGamesActionAsync(games, action)", windowSource);
         Assert.Contains("SetGamesExtractionTemplate", windowSource);
-        Assert.Contains("foreach (var game in games.DistinctBy", viewModelSource);
+        Assert.Contains("var queuedGames = games.DistinctBy", viewModelSource);
         Assert.Contains("await actionHost.ExecuteBackgroundActionAsync(action)", viewModelSource);
+        Assert.Contains("BatchProgressMessage", xaml);
+        Assert.Contains("batchContext.ReportProgress", viewModelSource);
         var addMethod = viewModelSource[viewModelSource.IndexOf("private async Task AddCandidatesToLibraryAsync", StringComparison.Ordinal)..viewModelSource.IndexOf("public static string GetCandidateDisplayName", StringComparison.Ordinal)];
         Assert.Contains("progressWindow.Show();", addMethod);
         Assert.DoesNotContain("owner.IsEnabled = false", addMethod);
+    }
+
+    [Fact]
+    public void 游戏库样式准备目录和多启动文件延迟确认应符合约定()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var xaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
+        var viewModelSource = File.ReadAllText(Path.Combine(appRoot, "ViewModels", "MainViewModel.cs"));
+
+        Assert.Contains("RowHeight=\"54\"", xaml);
+        Assert.Contains("VerticalContentAlignment\" Value=\"Center\"", xaml);
+        Assert.Contains("HorizontalContentAlignment\" Value=\"Left\"", xaml);
+        Assert.Contains("Path.Combine(gameContainer, \".prepare\")", detailSource);
+        Assert.Contains("Path.Combine(gameContainer, \"content\")", detailSource);
+        Assert.DoesNotContain("CopyDirectoryAsync(selectedGameRoot, stagedFinal", detailSource);
+        Assert.Contains("launchDiscovery?.Candidates.Count == 1", detailSource);
+        Assert.Contains("if (!EnsureLaunchFileSelected()) return;", detailSource);
+        Assert.Contains("if (!EnsureLaunchFileSelected(game, owner)) return;", viewModelSource);
     }
 
     [Fact]

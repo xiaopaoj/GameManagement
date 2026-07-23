@@ -23,6 +23,9 @@ public sealed class MainViewModel : ObservableObject
     private bool _isScanning;
     private int _scanProgress;
     private string _scanProgressMessage = string.Empty;
+    private int _batchProgress;
+    private string _batchProgressMessage = string.Empty;
+    private bool _isBatchOperationRunning;
     private string _candidateSearchText = string.Empty;
     private string _candidateKindFilter = "全部";
     private string _candidateAddedFilter = "全部";
@@ -50,6 +53,9 @@ public sealed class MainViewModel : ObservableObject
     public string CandidateAddedFilter { get => _candidateAddedFilter; set { if (Set(ref _candidateAddedFilter, value)) RefreshCandidates(); } }
     public string CandidateDriveFilter { get => _candidateDriveFilter; set { if (Set(ref _candidateDriveFilter, value)) RefreshCandidates(); } }
     public string StatusMessage { get => _statusMessage; set => Set(ref _statusMessage, value); }
+    public int BatchProgress { get => _batchProgress; set => Set(ref _batchProgress, value); }
+    public string BatchProgressMessage { get => _batchProgressMessage; set => Set(ref _batchProgressMessage, value); }
+    public bool IsBatchOperationRunning { get => _isBatchOperationRunning; set => Set(ref _isBatchOperationRunning, value); }
     public bool HideAddedCandidates { get => _hideAddedCandidates; set { if (Set(ref _hideAddedCandidates, value)) RefreshCandidates(); } }
     public GameItem? SelectedGame { get => _selectedGame; set => Set(ref _selectedGame, value); }
     public ScanPathItem? SelectedScanPath { get => _selectedScanPath; set => Set(ref _selectedScanPath, value); }
@@ -316,6 +322,7 @@ public sealed class MainViewModel : ObservableObject
         if (SelectedGame.Status == "运行中") { ShowError("该游戏的主程序已经在运行。 "); return; }
         var game = SelectedGame;
         var owner = Application.Current.MainWindow;
+        if (!EnsureLaunchFileSelected(game, owner)) return;
         if (!game.HasSystemSave)
         {
             try
@@ -455,15 +462,56 @@ public sealed class MainViewModel : ObservableObject
     public async Task ExecuteGamesActionAsync(IReadOnlyList<GameItem> games, string action)
     {
         if (games.Count == 0 || action is not ("准备游玩" or "归档游戏")) return;
-        StatusMessage = $"已将 {games.Count} 个游戏加入“{action}”后台队列";
-        var batchContext = new BatchOperationContext { IsBatch = true };
-        foreach (var game in games.DistinctBy(item => item.Id))
+        var queuedGames = games.DistinctBy(item => item.Id).ToList();
+        StatusMessage = $"已将 {queuedGames.Count} 个游戏加入“{action}”后台队列";
+        var batchTask = new OperationTaskItem { Name = $"批量{action}：{queuedGames.Count} 个游戏", TaskType = $"批量{action}", Status = "运行中", Message = "正在启动批量任务" };
+        _state.OperationTasks.Add(batchTask); Tasks.Insert(0, batchTask);
+        IsBatchOperationRunning = true; BatchProgress = 0; BatchProgressMessage = $"0/{queuedGames.Count}｜准备开始";
+        var batchContext = new BatchOperationContext { IsBatch = true, TotalCount = queuedGames.Count };
+        batchContext.ReportProgress = (percentage, message) =>
         {
+            BatchProgress = percentage; BatchProgressMessage = message;
+            batchTask.Progress = percentage; batchTask.Message = message;
+        };
+        for (var index = 0; index < queuedGames.Count; index++)
+        {
+            var game = queuedGames[index];
+            batchContext.CurrentIndex = index;
+            batchContext.ReportProgress(index * 100 / queuedGames.Count, $"{index + 1}/{queuedGames.Count}｜{game.DisplayName}｜等待开始");
             var actionHost = new GameDetailWindow(game, _state, SaveAndRefreshGameLibrary, OnGameStateChanged, directActionHost: true, batchContext: batchContext) { Owner = Application.Current.MainWindow };
             await actionHost.ExecuteBackgroundActionAsync(action);
+            batchContext.ReportProgress((index + 1) * 100 / queuedGames.Count, $"{index + 1}/{queuedGames.Count}｜{game.DisplayName}｜已处理");
         }
+        batchTask.Status = "完成"; batchTask.Progress = 100; batchTask.Message = $"{queuedGames.Count} 个游戏均已处理"; batchTask.CompletedAt = DateTime.Now;
+        BatchProgress = 100; BatchProgressMessage = $"{queuedGames.Count}/{queuedGames.Count}｜批量任务完成"; IsBatchOperationRunning = false;
         SaveAndRefreshGameLibrary($"批量{action}队列处理完成");
-        MessageBox.Show(Application.Current.MainWindow, $"所选 {games.Count} 个游戏的“{action}”后台队列已经处理完成。", "批量操作完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBox.Show(Application.Current.MainWindow, $"所选 {queuedGames.Count} 个游戏的“{action}”后台队列已经处理完成。", "批量操作完成", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private bool EnsureLaunchFileSelected(GameItem game, Window owner)
+    {
+        if (!string.IsNullOrWhiteSpace(game.PlayableRootPath) && !string.IsNullOrWhiteSpace(game.ExecutableRelativePath)
+            && File.Exists(Path.Combine(game.PlayableRootPath, game.ExecutableRelativePath))) return true;
+        if (string.IsNullOrWhiteSpace(game.PlayableRootPath) || !Directory.Exists(game.PlayableRootPath)) { ShowError("该游戏尚未准备完成。"); return false; }
+        var discovery = ExecutableDiscoveryService.Discover(game.PlayableRootPath);
+        if (discovery is null) { ShowError("游戏目录中没有找到有效的 EXE 或 index.html。"); return false; }
+        string? launchFile;
+        if (discovery.Candidates.Count == 1) launchFile = discovery.Candidates[0].Path;
+        else
+        {
+            var choices = discovery.Candidates.Select((candidate, index) => new ChoiceItem { Name = $"{(index == 0 ? "推荐｜" : string.Empty)}{Path.GetFileName(candidate.Path)}", Description = Path.GetRelativePath(discovery.GameRoot, candidate.Path), Value = candidate.Path });
+            var window = new ChoiceWindow("选择游戏启动文件", "准备阶段发现了多个启动文件，请在首次启动前确认主游戏程序：", choices) { Owner = owner };
+            if (window.ShowDialog() != true || window.SelectedChoice?.Value is not string selected) return false;
+            launchFile = selected;
+        }
+        var relativePath = Path.GetRelativePath(game.PlayableRootPath, launchFile);
+        game.ExecutableRelativePath = relativePath;
+        var version = game.Versions.FirstOrDefault(item => item.Id == game.CurrentVersionId);
+        if (version is not null) version.ExecutableRelativePath = relativePath;
+        var icon = IconExtractionService.ExtractToCache(launchFile, game.Id);
+        if (!string.IsNullOrWhiteSpace(icon)) { game.IconRelativePath = icon; if (version is not null) version.IconRelativePath = icon; }
+        SaveAndRefreshGameLibrary("启动文件已确认并保存");
+        return true;
     }
 
     public void OpenExtractionTemplates() => new ExtractionTemplateWindow(_state, message => Save(message)) { Owner = Application.Current.MainWindow }.ShowDialog();

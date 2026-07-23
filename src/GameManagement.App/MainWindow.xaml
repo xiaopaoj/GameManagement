@@ -6,13 +6,29 @@
         Closing="MainWindow_Closing">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        <Style x:Key="GameLibraryCellStyle" TargetType="DataGridCell">
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Padding" Value="10,0"/>
+        </Style>
+        <Style x:Key="GameLibraryHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Padding" Value="10,0"/>
+        </Style>
     </Window.Resources>
     <Grid>
     <DockPanel IsEnabled="{Binding IsInterfaceEnabled}">
         <Border DockPanel.Dock="Top" Background="#243447" Padding="18,12">
             <Grid>
                 <StackPanel><TextBlock Text="游戏管理软件" Foreground="White" FontSize="24" FontWeight="SemiBold"/><TextBlock Text="原始压缩文件、游戏盘和存档统一管理" Foreground="#D5DEE8"/></StackPanel>
-                <TextBlock Text="{Binding StatusMessage}" Foreground="White" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Width="330">
+                    <TextBlock Text="{Binding StatusMessage}" Foreground="White" TextAlignment="Right" TextTrimming="CharacterEllipsis"/>
+                    <StackPanel Visibility="{Binding IsBatchOperationRunning, Converter={StaticResource BooleanToVisibilityConverter}}" Margin="0,6,0,0">
+                        <ProgressBar Value="{Binding BatchProgress}" Minimum="0" Maximum="100" Height="7"/>
+                        <TextBlock Text="{Binding BatchProgressMessage}" Foreground="#D5DEE8" TextAlignment="Right" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </StackPanel>
             </Grid>
         </Border>
         <TabControl Margin="12">
@@ -20,7 +36,7 @@
                 <Grid Margin="10">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8"><Button Content="查看详情" Command="{Binding OpenGameDetailsCommand}"/><Button Content="启动游戏" Command="{Binding LaunchGameCommand}"/><Button Content="打开游戏目录" Command="{Binding OpenGameFolderCommand}"/><Button Content="刷新" Command="{Binding ReloadCommand}"/></StackPanel>
-                    <DataGrid x:Name="GameGrid" Grid.Row="1" ItemsSource="{Binding Games}" SelectedItem="{Binding SelectedGame}" SelectionMode="Extended" SelectionUnit="FullRow" MouseDoubleClick="GameGrid_MouseDoubleClick" PreviewMouseRightButtonDown="GameGrid_PreviewMouseRightButtonDown" RowHeight="44">
+                    <DataGrid x:Name="GameGrid" Grid.Row="1" ItemsSource="{Binding Games}" SelectedItem="{Binding SelectedGame}" SelectionMode="Extended" SelectionUnit="FullRow" MouseDoubleClick="GameGrid_MouseDoubleClick" PreviewMouseRightButtonDown="GameGrid_PreviewMouseRightButtonDown" RowHeight="54" ColumnHeaderHeight="40" FontSize="14" CellStyle="{StaticResource GameLibraryCellStyle}" ColumnHeaderStyle="{StaticResource GameLibraryHeaderStyle}">
                         <DataGrid.ContextMenu>
                             <ContextMenu Opened="GameContextMenu_Opened">
                                 <MenuItem Header="查看详情" Click="GameContextMenu_Click"/>
@@ -50,7 +66,16 @@
                                 <MenuItem Header="删除游戏主记录" Tag="删除游戏主记录" Click="GameContextMenu_Click"/>
                             </ContextMenu>
                         </DataGrid.ContextMenu>
-                        <DataGrid.Columns><DataGridTemplateColumn Header="图标" Width="58"><DataGridTemplateColumn.CellTemplate><DataTemplate><Image Source="{Binding IconFullPath}" Width="36" Height="36" Stretch="Uniform"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn><DataGridTextColumn Header="游戏名称" Binding="{Binding DisplayName}" Width="2*"/><DataGridTextColumn Header="当前版本" Binding="{Binding CurrentVersionName}" Width="*"/><DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="100"/><DataGridTextColumn Header="本地存档" Binding="{Binding LocalSaveStatus}" Width="75"/><DataGridTextColumn Header="原始状态" Binding="{Binding SourcePathStatus}" Width="75"/><DataGridTextColumn Header="原始路径" Binding="{Binding SourcePath}" Width="3*"/><DataGridTextColumn Header="上次游玩" Binding="{Binding LastPlayedAt}" Width="150"/></DataGrid.Columns>
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="图标" Width="64"><DataGridTemplateColumn.CellTemplate><DataTemplate><Grid Width="42" Height="42"><Image Source="{Binding IconFullPath}" Width="38" Height="38" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                            <DataGridTextColumn Header="游戏名称" Binding="{Binding DisplayName}" Width="2*" MinWidth="150"/>
+                            <DataGridTextColumn Header="当前版本" Binding="{Binding CurrentVersionName}" Width="*" MinWidth="100"/>
+                            <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="110"/>
+                            <DataGridTextColumn Header="本地存档" Binding="{Binding LocalSaveStatus}" Width="90"/>
+                            <DataGridTextColumn Header="原始状态" Binding="{Binding SourcePathStatus}" Width="90"/>
+                            <DataGridTextColumn Header="原始路径" Binding="{Binding SourcePath}" Width="3*" MinWidth="220"/>
+                            <DataGridTextColumn Header="上次游玩" Binding="{Binding LastPlayedAt}" Width="160"/>
+                        </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
             </TabItem>

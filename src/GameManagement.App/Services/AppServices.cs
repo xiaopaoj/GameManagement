@@ -119,6 +119,10 @@ public static class TemporaryDirectoryService
                 var root = Path.GetFullPath(Path.Combine(disk.RootPath, folder)).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
                 if (target.Length > root.Length && target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return true;
             }
+            var gamesRoot = Path.GetFullPath(Path.Combine(disk.RootPath, "Games")).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var relative = Path.GetRelativePath(gamesRoot, target.TrimEnd(Path.DirectorySeparatorChar));
+            var parts = relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2 && parts[1].Equals(".prepare", StringComparison.OrdinalIgnoreCase) && !parts.Any(part => part == "..")) return true;
         }
         return false;
     }

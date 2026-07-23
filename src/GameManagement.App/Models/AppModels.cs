@@ -43,6 +43,9 @@ public sealed class BatchOperationContext
     public Dictionary<string, string> Passwords { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, (bool UseHistory, bool AutoReplayFollowing)> HistoryReplayDecisions { get; } = new(StringComparer.Ordinal);
     public string? LaunchFileRelativePath { get; set; }
+    [JsonIgnore] public Action<int, string>? ReportProgress { get; set; }
+    [JsonIgnore] public int CurrentIndex { get; set; }
+    [JsonIgnore] public int TotalCount { get; set; }
 }
 
 public sealed class ScanPathItem

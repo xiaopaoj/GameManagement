@@ -144,12 +144,12 @@ public partial class GameDetailWindow : Window
             catch (Exception ex) { ShowError($"读取共享存档清单失败：{ex.Message}"); FailPendingVersionSwitch(); return; }
         }
 
-        var workRoot = Path.Combine(disk.RootPath, "GameTemp", _game.Id.ToString(), version.Id.ToString());
+        var gameContainer = Path.Combine(disk.RootPath, "Games", _game.Id.ToString());
+        var workRoot = Path.Combine(gameContainer, ".prepare");
         var sourceRoot = Path.Combine(workRoot, "source");
         var step1 = Path.Combine(workRoot, "step1");
         var step2 = Path.Combine(workRoot, "step2");
-        var stagedFinal = Path.Combine(workRoot, "final");
-        var finalTarget = Path.Combine(disk.RootPath, "Games", _game.Id.ToString());
+        var finalTarget = Path.Combine(gameContainer, "content");
         if (Directory.Exists(finalTarget)) { ShowError($"目标游戏目录已经存在：\n{finalTarget}"); FailPendingVersionSwitch(); return; }
         if (Directory.Exists(workRoot))
         {
@@ -261,26 +261,27 @@ public partial class GameDetailWindow : Window
             UpdatePreparationTask(task, progress, 75, "正在递归查找第一个有效 EXE 并确定游戏目录…", finalExtractionRoot, "等待确认游戏目录");
             var launchDiscovery = await Task.Run(() => ExecutableDiscoveryService.Discover(finalExtractionRoot, cancellation.Token), cancellation.Token);
             progress.Hide(); IsEnabled = true;
-            var launchSelection = ExecutableDiscoveryService.ResolveRecordedSelection(finalExtractionRoot, version.ExecutableRelativePath, launchDiscovery?.GameRoot)
-                ?? SelectLaunchFile(finalExtractionRoot, launchDiscovery);
-            if (launchSelection is null) throw new OperationCanceledException("用户取消了启动文件选择。", cancellation.Token);
-            var launchFile = launchSelection.LaunchFile;
-            var selectedGameRoot = launchSelection.GameRoot;
+            var launchSelection = ExecutableDiscoveryService.ResolveRecordedSelection(finalExtractionRoot, version.ExecutableRelativePath, launchDiscovery?.GameRoot);
+            if (launchSelection is null && launchDiscovery?.Candidates.Count == 1)
+                launchSelection = new GameLaunchSelection(launchDiscovery.GameRoot, launchDiscovery.Candidates[0].Path);
+            if (launchDiscovery is null)
+                launchSelection = SelectLaunchFile(finalExtractionRoot, null) ?? throw new OperationCanceledException("用户取消了启动文件选择。", cancellation.Token);
+            var selectedGameRoot = launchSelection?.GameRoot ?? launchDiscovery!.GameRoot;
 
-            IsEnabled = false; progress.Show(); UpdatePreparationTask(task, progress, 85, "正在整理最终游戏目录…", selectedGameRoot, "等待确认游戏目录");
-            await SourceCopyService.CopyDirectoryAsync(selectedGameRoot, stagedFinal, cancellation.Token);
-            var executableRelativePath = Path.GetRelativePath(selectedGameRoot, launchFile);
+            IsEnabled = false; progress.Show(); UpdatePreparationTask(task, progress, 85, "正在直接提交最终游戏目录…", selectedGameRoot, "等待确认游戏目录");
+            var executableRelativePath = launchSelection is null ? null : Path.GetRelativePath(selectedGameRoot, launchSelection.LaunchFile);
             version.ExecutableRelativePath = executableRelativePath;
 
-            UpdatePreparationTask(task, progress, 92, "正在计算游戏文件 SHA-256 基线，这可能需要较长时间…", stagedFinal, "等待确认游戏目录");
-            var baselines = await BaselineService.BuildAsync(_game.Id, version.Id, stagedFinal, cancellation.Token);
+            UpdatePreparationTask(task, progress, 92, "正在计算游戏文件 SHA-256 基线，这可能需要较长时间…", selectedGameRoot, "等待确认游戏目录");
+            var baselines = await BaselineService.BuildAsync(_game.Id, version.Id, selectedGameRoot, cancellation.Token);
             _state.FileBaselines.RemoveAll(item => item.GameVersionId == version.Id);
             _state.FileBaselines.AddRange(baselines);
 
             cancellation.Token.ThrowIfCancellationRequested();
-            Directory.Move(stagedFinal, finalTarget);
+            Directory.CreateDirectory(gameContainer);
+            Directory.Move(selectedGameRoot, finalTarget);
             finalCommitted = true;
-            var finalExecutable = Path.Combine(finalTarget, executableRelativePath);
+            var finalExecutable = string.IsNullOrWhiteSpace(executableRelativePath) ? null : Path.Combine(finalTarget, executableRelativePath);
 
             if (_game.HasLocalSave)
             {
@@ -292,8 +293,8 @@ public partial class GameDetailWindow : Window
             version.GameDiskId = disk.Id;
             _game.CurrentGameDiskId = disk.Id;
             _game.PlayableRootPath = finalTarget;
-            _game.ExecutableRelativePath = Path.GetRelativePath(finalTarget, finalExecutable);
-            var extractedIconPath = IconExtractionService.ExtractToCache(finalExecutable, _game.Id);
+            _game.ExecutableRelativePath = executableRelativePath;
+            var extractedIconPath = finalExecutable is null ? null : IconExtractionService.ExtractToCache(finalExecutable, _game.Id);
             if (!string.IsNullOrWhiteSpace(extractedIconPath))
             {
                 version.IconRelativePath = extractedIconPath;
@@ -304,7 +305,9 @@ public partial class GameDetailWindow : Window
             _game.ArchiveStatus = "未归档";
             _game.DirectoryCleanupStatus = "目录存在";
             _game.ArchiveMessage = string.Empty;
-            task.Status = "完成"; task.Progress = 100; task.Message = $"游戏准备完成，共建立 {baselines.Count} 个文件基线"; task.CurrentPath = finalTarget; task.CompletedAt = DateTime.Now;
+            task.Status = "完成"; task.Progress = 100; task.Message = launchSelection is null
+                ? $"游戏准备完成，共建立 {baselines.Count} 个文件基线；首次启动时需选择启动文件"
+                : $"游戏准备完成，共建立 {baselines.Count} 个文件基线"; task.CurrentPath = finalTarget; task.CompletedAt = DateTime.Now;
             _save(task.Message);
             _versionSwitchInProgress = false;
             RefreshBindings();
@@ -327,7 +330,7 @@ public partial class GameDetailWindow : Window
         }
         catch (OperationCanceledException ex)
         {
-            RollbackFinalCommit(finalTarget, stagedFinal, finalCommitted);
+            RollbackFinalCommit(finalTarget, Path.Combine(workRoot, "recovered-content"), finalCommitted);
             task.Status = "已取消"; task.Message = "用户取消了准备任务，临时目录已保留。"; task.ErrorMessage = ex.Message; task.CompletedAt = DateTime.Now;
             _game.Status = _versionSwitchInProgress ? "版本切换失败" : "未准备"; _versionSwitchInProgress = false; _save(task.Message);
             RestoreAfterProgressDialog(progress);
@@ -335,7 +338,7 @@ public partial class GameDetailWindow : Window
         }
         catch (Exception ex)
         {
-            RollbackFinalCommit(finalTarget, stagedFinal, finalCommitted);
+            RollbackFinalCommit(finalTarget, Path.Combine(workRoot, "recovered-content"), finalCommitted);
             task.Status = "失败"; task.Message = ex.Message; task.ErrorMessage = ex.ToString(); task.CompletedAt = DateTime.Now;
             _game.Status = _versionSwitchInProgress ? "版本切换失败" : "操作失败"; _versionSwitchInProgress = false; _save("准备任务失败，临时目录已保留");
             AppLogger.Error($"准备游戏失败：{_game.DisplayName}", ex);
@@ -562,6 +565,7 @@ public partial class GameDetailWindow : Window
     private async void Launch_Click(object sender, RoutedEventArgs e)
     {
         if (_game.Status == "运行中") { ShowError("该游戏的主程序已经在运行。 "); return; }
+        if (!EnsureLaunchFileSelected()) return;
         if (!_game.HasSystemSave)
         {
             try
@@ -1061,7 +1065,30 @@ public partial class GameDetailWindow : Window
     private void UpdatePreparationTask(OperationTaskItem task, PreparationProgressWindow progress, int percentage, string message, string currentPath, string gameStatus)
     {
         task.Progress = percentage; task.Message = message; task.CurrentPath = currentPath; _game.Status = gameStatus;
+        if (_batchContext?.IsBatch == true && _batchContext.TotalCount > 0)
+        {
+            var overall = ((_batchContext.CurrentIndex * 100) + percentage) / _batchContext.TotalCount;
+            _batchContext.ReportProgress?.Invoke(overall, $"{_batchContext.CurrentIndex + 1}/{_batchContext.TotalCount}｜{_game.DisplayName}｜{percentage}%");
+        }
         progress.UpdateStatus(message, percentage); _save($"准备任务进度：{percentage}%");
+    }
+
+    private bool EnsureLaunchFileSelected()
+    {
+        if (!string.IsNullOrWhiteSpace(_game.PlayableRootPath) && !string.IsNullOrWhiteSpace(_game.ExecutableRelativePath)
+            && File.Exists(Path.Combine(_game.PlayableRootPath, _game.ExecutableRelativePath))) return true;
+        if (string.IsNullOrWhiteSpace(_game.PlayableRootPath) || !Directory.Exists(_game.PlayableRootPath)) { ShowError("该游戏尚未准备完成。"); return false; }
+        var discovery = ExecutableDiscoveryService.Discover(_game.PlayableRootPath);
+        var selection = SelectLaunchFile(_game.PlayableRootPath, discovery);
+        if (selection is null) return false;
+        var relativePath = Path.GetRelativePath(_game.PlayableRootPath, selection.LaunchFile);
+        _game.ExecutableRelativePath = relativePath;
+        var version = _game.Versions.FirstOrDefault(item => item.Id == _game.CurrentVersionId);
+        if (version is not null) version.ExecutableRelativePath = relativePath;
+        var icon = IconExtractionService.ExtractToCache(selection.LaunchFile, _game.Id);
+        if (!string.IsNullOrWhiteSpace(icon)) { _game.IconRelativePath = icon; if (version is not null) version.IconRelativePath = icon; }
+        _save("启动文件已确认并保存"); RefreshBindings();
+        return true;
     }
 
     private static void ShowError(string message) => MessageBox.Show(message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
