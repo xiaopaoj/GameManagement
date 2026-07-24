@@ -26,7 +26,7 @@ public partial class App : Application
                 Shutdown(0);
                 return;
             }
-            if (passwordRequired && new SecurityUnlockWindow().ShowDialog() != true) { Shutdown(0); return; }
+            if (passwordRequired && new SecurityWrapperWindow().ShowDialog() != true) { Shutdown(0); return; }
             var startupStore = new StateStore();
             var startupState = startupStore.Load();
             ThemeService.Apply(startupState.UiSettings.ThemeName);

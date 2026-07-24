@@ -2066,6 +2066,47 @@ public sealed class ModelTests
         finally { MasterKeyService.ClearSession(); Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public void 连续安全密码错误应持久化重试等待时间()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var configPath = Path.Combine(root, "security.json");
+        try
+        {
+            _ = MasterKeyService.GetOrCreate(configPath);
+            MasterKeyService.EnablePassword(configPath, "CorrectPassword-123");
+            MasterKeyService.ClearSession();
+            for (var index = 0; index < 4; index++) Assert.False(MasterKeyService.TryUnlock(configPath, "WrongPassword-456"));
+            Assert.True(MasterKeyService.GetRemainingRetryDelay(configPath) > TimeSpan.Zero);
+            Assert.False(MasterKeyService.TryUnlock(configPath, "CorrectPassword-123"));
+            var configurationText = File.ReadAllText(configPath, Encoding.UTF8);
+            Assert.DoesNotContain("FailureCount", configurationText);
+            Assert.DoesNotContain("RetryAfterUtc", configurationText);
+        }
+        finally { MasterKeyService.ClearSession(); Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 安全模式应先显示包装外壳并支持手动和空闲锁定()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var appSource = File.ReadAllText(Path.Combine(appRoot, "App.xaml.cs"));
+        var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var mainSource = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var wrapperXaml = File.ReadAllText(Path.Combine(appRoot, "SecurityWrapperWindow.xaml"));
+
+        Assert.Contains("new SecurityWrapperWindow().ShowDialog()", appSource);
+        Assert.Contains("Title=\"工具箱\"", wrapperXaml);
+        Assert.Contains("Content=\"立即锁定\"", mainXaml);
+        Assert.Contains("SecurityLockService.RestartIntoLockedMode", mainSource);
+        Assert.Contains("HasRunningTasks()", mainSource);
+        Assert.Contains("AutoLockMinutes", mainSource);
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

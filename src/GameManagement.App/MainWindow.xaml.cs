@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using GameManagement.ViewModels;
 using GameManagement.Services;
 
@@ -9,10 +10,18 @@ namespace GameManagement;
 
 public partial class MainWindow : Window
 {
+    private readonly DispatcherTimer _securityIdleTimer = new() { Interval = TimeSpan.FromSeconds(15) };
+    private DateTime _lastUserActivity = DateTime.UtcNow;
+
     public MainWindow()
     {
         InitializeComponent();
         DataContext = new MainViewModel();
+        PreviewMouseDown += (_, _) => _lastUserActivity = DateTime.UtcNow;
+        PreviewKeyDown += (_, _) => _lastUserActivity = DateTime.UtcNow;
+        _securityIdleTimer.Tick += SecurityIdleTimer_Tick;
+        if (MasterKeyService.IsPasswordRequired(AppPaths.SecurityConfigFile)) _securityIdleTimer.Start();
+        Closed += (_, _) => _securityIdleTimer.Stop();
     }
 
     private void GameGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -126,4 +135,20 @@ public partial class MainWindow : Window
         var window = new SecurityModeSettingsWindow { Owner = this };
         if (window.ShowDialog() == true && window.RequiresRestart) Application.Current.Shutdown();
     }
+
+    private void LockNow_Click(object sender, RoutedEventArgs e)
+    {
+        if (!MasterKeyService.IsPasswordRequired(AppPaths.SecurityConfigFile)) { MessageBox.Show(this, "安全密码模式尚未开启。", "无法锁定", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+        if (HasRunningTasks()) { MessageBox.Show(this, "存在运行中的软件任务，请等待任务完成或取消后再锁定。", "任务运行中", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        SecurityLockService.RestartIntoLockedMode();
+    }
+
+    private void SecurityIdleTimer_Tick(object? sender, EventArgs e)
+    {
+        var minutes = Math.Max(1, MasterKeyService.LoadConfiguration(AppPaths.SecurityConfigFile).AutoLockMinutes);
+        if (DateTime.UtcNow - _lastUserActivity < TimeSpan.FromMinutes(minutes) || HasRunningTasks()) return;
+        _securityIdleTimer.Stop(); SecurityLockService.RestartIntoLockedMode();
+    }
+
+    private bool HasRunningTasks() => DataContext is MainViewModel { Tasks: var tasks } && tasks.Any(task => task.Status == "运行中");
 }

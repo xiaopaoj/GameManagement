@@ -14,11 +14,16 @@ public sealed class SecurityConfiguration
     public string PasswordSalt { get; set; } = string.Empty;
     public int PasswordIterations { get; set; } = 600_000;
     public string PasswordWrappedMasterKey { get; set; } = string.Empty;
+    public string ProtectedFailureState { get; set; } = string.Empty;
+    public int AutoLockMinutes { get; set; } = 15;
 }
+
+public sealed class PasswordFailureState { public int FailureCount { get; set; } public DateTime? RetryAfterUtc { get; set; } }
 
 public static class MasterKeyService
 {
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("GameManagement.MasterKey.v1");
+    private static readonly byte[] FailureEntropy = Encoding.UTF8.GetBytes("GameManagement.PasswordFailures.v1");
     private static readonly object Sync = new();
     private static byte[]? _unlockedPasswordKey;
 
@@ -62,16 +67,53 @@ public static class MasterKeyService
             try
             {
                 var configuration = LoadConfiguration(configurationPath);
+                if (GetRemainingRetryDelay(configurationPath) > TimeSpan.Zero) return false;
                 if (!configuration.SecurityModeEnabled || configuration.KeyProtection != "Password-PBKDF2-SHA256") return false;
                 wrappingKey = DerivePasswordKey(password, Convert.FromBase64String(configuration.PasswordSalt), configuration.PasswordIterations);
                 var masterKey = DecryptWrappedKey(Convert.FromBase64String(configuration.PasswordWrappedMasterKey), wrappingKey);
                 _unlockedPasswordKey = masterKey;
+                configuration.ProtectedFailureState = string.Empty;
+                WriteConfigurationAtomic(configurationPath, configuration);
                 return true;
             }
-            catch (CryptographicException) { return false; }
-            catch (FormatException) { return false; }
+            catch (CryptographicException) { RecordFailedAttempt(configurationPath); return false; }
+            catch (FormatException) { RecordFailedAttempt(configurationPath); return false; }
             finally { if (wrappingKey is not null) CryptographicOperations.ZeroMemory(wrappingKey); }
         }
+    }
+
+    public static TimeSpan GetRemainingRetryDelay(string configurationPath)
+    {
+        if (!File.Exists(configurationPath)) return TimeSpan.Zero;
+        var configuration = LoadConfiguration(configurationPath);
+        var state = ReadFailureState(configuration);
+        if (state.RetryAfterUtc is not DateTime retryAfter) return TimeSpan.Zero;
+        var remaining = retryAfter - DateTime.UtcNow;
+        return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+    }
+
+    private static void RecordFailedAttempt(string configurationPath)
+    {
+        var configuration = LoadConfiguration(configurationPath);
+        var state = ReadFailureState(configuration); state.FailureCount++;
+        var delay = state.FailureCount switch { <= 3 => TimeSpan.Zero, <= 5 => TimeSpan.FromSeconds(5), <= 9 => TimeSpan.FromSeconds(30), _ => TimeSpan.FromMinutes(5) };
+        state.RetryAfterUtc = delay > TimeSpan.Zero ? DateTime.UtcNow.Add(delay) : null;
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(state));
+        configuration.ProtectedFailureState = Convert.ToBase64String(ProtectedData.Protect(bytes, FailureEntropy, DataProtectionScope.CurrentUser));
+        CryptographicOperations.ZeroMemory(bytes);
+        WriteConfigurationAtomic(configurationPath, configuration);
+    }
+
+    private static PasswordFailureState ReadFailureState(SecurityConfiguration configuration)
+    {
+        if (string.IsNullOrWhiteSpace(configuration.ProtectedFailureState)) return new PasswordFailureState();
+        try
+        {
+            var bytes = ProtectedData.Unprotect(Convert.FromBase64String(configuration.ProtectedFailureState), FailureEntropy, DataProtectionScope.CurrentUser);
+            try { return JsonSerializer.Deserialize<PasswordFailureState>(bytes) ?? new PasswordFailureState(); }
+            finally { CryptographicOperations.ZeroMemory(bytes); }
+        }
+        catch { return new PasswordFailureState(); }
     }
 
     public static void EnablePassword(string configurationPath, string password)

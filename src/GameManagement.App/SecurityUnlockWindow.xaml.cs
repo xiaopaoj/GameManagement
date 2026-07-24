@@ -13,7 +13,10 @@ public partial class SecurityUnlockWindow : Window
 
     private void TryUnlock()
     {
+        var remaining = MasterKeyService.GetRemainingRetryDelay(AppPaths.SecurityConfigFile);
+        if (remaining > TimeSpan.Zero) { StatusText.Text = $"密码错误次数过多，请在 {Math.Ceiling(remaining.TotalSeconds)} 秒后重试。"; return; }
         if (MasterKeyService.TryUnlock(AppPaths.SecurityConfigFile, PasswordText.Password)) { PasswordText.Clear(); DialogResult = true; return; }
-        PasswordText.Clear(); StatusText.Text = "安全密码错误。"; PasswordText.Focus();
+        PasswordText.Clear(); remaining = MasterKeyService.GetRemainingRetryDelay(AppPaths.SecurityConfigFile);
+        StatusText.Text = remaining > TimeSpan.Zero ? $"安全密码错误，请在 {Math.Ceiling(remaining.TotalSeconds)} 秒后重试。" : "安全密码错误。"; PasswordText.Focus();
     }
 }
