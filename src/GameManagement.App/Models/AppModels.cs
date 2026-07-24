@@ -3,6 +3,7 @@ using System.IO;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using GameManagement.Services;
 
 namespace GameManagement.Models;
@@ -136,6 +137,7 @@ public sealed class GameItem
             return string.IsNullOrWhiteSpace(savedPath) ? null : System.IO.Path.Combine(AppPaths.Root, savedPath);
         }
     }
+    [JsonIgnore] public BitmapSource? IconImage => EncryptedIconService.Load(!string.IsNullOrWhiteSpace(IconRelativePath) ? IconRelativePath : Versions.FirstOrDefault(version => version.Id == CurrentVersionId)?.IconRelativePath);
     [JsonIgnore] public string LastRunDurationText => LastRunDurationSeconds is long seconds ? TimeSpan.FromSeconds(seconds).ToString(@"hh\:mm\:ss") : "暂无记录";
     [JsonIgnore] public string LocalSaveStatus => HasLocalSave ? "有" : "无";
 }

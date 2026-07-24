@@ -16,6 +16,39 @@ public sealed class SecurityConfiguration
     public string PasswordWrappedMasterKey { get; set; } = string.Empty;
     public string ProtectedFailureState { get; set; } = string.Empty;
     public int AutoLockMinutes { get; set; } = 15;
+    public List<string> MigratedLegacyFiles { get; set; } = [];
+}
+
+public static class LegacySensitiveMigrationService
+{
+    public static IReadOnlyList<string> Migrate()
+    {
+        var key = MasterKeyService.GetOrCreate(AppPaths.SecurityConfigFile);
+        var configuration = MasterKeyService.LoadConfiguration(AppPaths.SecurityConfigFile);
+        var migrated = configuration.MigratedLegacyFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var legacyFiles = new List<string>();
+        if (Directory.Exists(AppPaths.Logs)) legacyFiles.AddRange(Directory.EnumerateFiles(AppPaths.Logs, "*.log"));
+        var iconDirectory = Path.Combine(AppPaths.Data, "cache", "icons");
+        if (Directory.Exists(iconDirectory)) legacyFiles.AddRange(Directory.EnumerateFiles(iconDirectory, "*.png"));
+        foreach (var path in legacyFiles.Where(path => !migrated.Contains(Path.GetFullPath(path))))
+        {
+            if (Path.GetExtension(path).Equals(".log", StringComparison.OrdinalIgnoreCase))
+            {
+                var target = Path.Combine(AppPaths.Logs, Path.GetFileNameWithoutExtension(path) + ".securelog");
+                var previous = File.Exists(target) ? EncryptedDataFile.Read(target, key) : [];
+                var legacy = File.ReadAllBytes(path); var combined = new byte[previous.Length + legacy.Length];
+                Buffer.BlockCopy(previous, 0, combined, 0, previous.Length); Buffer.BlockCopy(legacy, 0, combined, previous.Length, legacy.Length);
+                EncryptedDataFile.WriteAtomic(target, combined, key); CryptographicOperations.ZeroMemory(previous); CryptographicOperations.ZeroMemory(legacy); CryptographicOperations.ZeroMemory(combined);
+            }
+            else if (Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out var gameId))
+            {
+                _ = EncryptedIconService.EnsureEncrypted(Path.GetRelativePath(AppPaths.Root, path), gameId);
+            }
+            migrated.Add(Path.GetFullPath(path));
+        }
+        configuration.MigratedLegacyFiles = migrated.ToList(); MasterKeyService.WriteConfigurationAtomic(AppPaths.SecurityConfigFile, configuration);
+        return legacyFiles.Where(File.Exists).ToList();
+    }
 }
 
 public sealed class PasswordFailureState { public int FailureCount { get; set; } public DateTime? RetryAfterUtc { get; set; } }

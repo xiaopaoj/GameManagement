@@ -67,7 +67,7 @@
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="图标" Width="64"><DataGridTemplateColumn.CellTemplate><DataTemplate><Grid Width="42" Height="42"><Image Source="{Binding IconFullPath}" Width="38" Height="38" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="图标" Width="64"><DataGridTemplateColumn.CellTemplate><DataTemplate><Grid Width="42" Height="42"><Image Source="{Binding IconImage}" Width="38" Height="38" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
                             <DataGridTextColumn Header="游戏名称" Binding="{Binding DisplayName}" Width="2*" MinWidth="150"/>
                             <DataGridTextColumn Header="当前版本" Binding="{Binding CurrentVersionName}" Width="*" MinWidth="100"/>
                             <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="110"/>
@@ -130,7 +130,7 @@
                 <Grid Margin="18">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <TextBlock Text="操作历史" FontSize="24" FontWeight="SemiBold"/>
-                    <WrapPanel Grid.Row="1" Margin="0,16,0,12"><Button Content="任务历史" Click="TaskHistory_Click"/><Button Content="备份历史" Click="BackupHistory_Click"/><Button Content="删除历史" Click="DeleteHistory_Click"/><Button Content="打开日志目录" Click="OpenLogs_Click"/></WrapPanel>
+                    <WrapPanel Grid.Row="1" Margin="0,16,0,12"><Button Content="任务历史" Click="TaskHistory_Click"/><Button Content="备份历史" Click="BackupHistory_Click"/><Button Content="删除历史" Click="DeleteHistory_Click"/><Button Content="查看加密日志" Click="OpenLogs_Click"/></WrapPanel>
                     <Border Grid.Row="2" Background="White" BorderBrush="#DCE1E6" BorderThickness="1" Padding="18"><TextBlock Text="此页面用于查询复制、解压、启动、存档、备份、归档和删除操作的历史记录。" TextWrapping="Wrap" Foreground="#59636E"/></Border>
                 </Grid>
             </TabItem>

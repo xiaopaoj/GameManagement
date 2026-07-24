@@ -7,7 +7,7 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="72"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <Border Width="60" Height="60" Background="White" BorderBrush="#DCE1E6" BorderThickness="1" CornerRadius="6"><Image Source="{Binding IconFullPath}" Stretch="Uniform" Margin="4"/></Border>
+            <Border Width="60" Height="60" Background="White" BorderBrush="#DCE1E6" BorderThickness="1" CornerRadius="6"><Image Source="{Binding IconImage}" Stretch="Uniform" Margin="4"/></Border>
             <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="{Binding DisplayName}" FontSize="26" FontWeight="SemiBold"/><TextBlock Text="{Binding Status, StringFormat=当前状态：{0}}" Foreground="#59636E" Margin="0,4,0,0"/></StackPanel>
         </Grid>
 

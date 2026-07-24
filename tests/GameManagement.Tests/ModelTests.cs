@@ -2107,6 +2107,46 @@ public sealed class ModelTests
         Assert.Contains("AutoLockMinutes", mainSource);
     }
 
+    [Fact]
+    public void 游戏图标与运行日志应使用加密文件并仅在软件内解密查看()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var servicesSource = File.ReadAllText(Path.Combine(appRoot, "Services", "AppServices.cs"));
+        var appSource = File.ReadAllText(Path.Combine(appRoot, "App.xaml.cs"));
+        var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var detailXaml = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml"));
+        var viewerSource = File.ReadAllText(Path.Combine(appRoot, "EncryptedLogViewerWindow.xaml.cs"));
+
+        Assert.Contains("application-{DateTime.Now:yyyyMMdd}.securelog", servicesSource);
+        Assert.DoesNotContain("File.AppendAllText(_file", servicesSource);
+        Assert.Contains("{gameId:N}.icon.secure", servicesSource);
+        Assert.Contains("EncryptedDataFile.WriteAtomic(outputPath", servicesSource);
+        Assert.Contains("LegacySensitiveMigrationService.Migrate()", appSource);
+        Assert.Contains("Source=\"{Binding IconImage}\"", mainXaml);
+        Assert.Contains("Source=\"{Binding IconImage}\"", detailXaml);
+        Assert.Contains("EncryptedDataFile.Read(file.FullName", viewerSource);
+    }
+
+    [Fact]
+    public void 锁定时应清除图标内存缓存且旧敏感文件迁移后保留人工删除确认()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var lockSource = File.ReadAllText(Path.Combine(appRoot, "Services", "SecurityLockService.cs"));
+        var securitySource = File.ReadAllText(Path.Combine(appRoot, "Services", "SecurityServices.cs"));
+        var appSource = File.ReadAllText(Path.Combine(appRoot, "App.xaml.cs"));
+
+        Assert.Contains("EncryptedIconService.ClearMemoryCache()", lockSource);
+        Assert.Contains("MigratedLegacyFiles", securitySource);
+        Assert.Contains("PromptLegacySensitiveFilesCleanup", appSource);
+        Assert.Contains("是否永久删除这些旧明文文件", appSource);
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -28,11 +29,28 @@ public static class AppPaths
 
 public static class AppLogger
 {
-    private static readonly object Sync = new(); private static string _file = string.Empty;
-    public static void Initialize() { _file = Path.Combine(AppPaths.Logs, $"application-{DateTime.Now:yyyyMMdd}.log"); Info("软件启动"); }
+    private static readonly object Sync = new(); private static string _file = string.Empty; private static readonly List<string> Pending = [];
+    public static void Initialize() { _file = Path.Combine(AppPaths.Logs, $"application-{DateTime.Now:yyyyMMdd}.securelog"); Info("软件启动"); }
+    public static void FlushPending() { lock (Sync) { foreach (var line in Pending.ToList()) WriteEncrypted(line); Pending.Clear(); } }
     public static void Info(string message) => Write("信息", message);
     public static void Error(string message, Exception ex) => Write("错误", $"{message}：{ex}");
-    private static void Write(string level, string message) { lock (Sync) { if (!string.IsNullOrWhiteSpace(_file)) File.AppendAllText(_file, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}"); } }
+    private static void Write(string level, string message)
+    {
+        lock (Sync)
+        {
+            if (string.IsNullOrWhiteSpace(_file)) return;
+            var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}";
+            try { WriteEncrypted(line); } catch (UnauthorizedAccessException) { Pending.Add(line); }
+        }
+    }
+    private static void WriteEncrypted(string line)
+    {
+        var key = MasterKeyService.GetOrCreate(AppPaths.SecurityConfigFile);
+        var existing = File.Exists(_file) ? EncryptedDataFile.Read(_file, key) : [];
+        var addition = Encoding.UTF8.GetBytes(line); var combined = new byte[existing.Length + addition.Length];
+        Buffer.BlockCopy(existing, 0, combined, 0, existing.Length); Buffer.BlockCopy(addition, 0, combined, existing.Length, addition.Length);
+        EncryptedDataFile.WriteAtomic(_file, combined, key); CryptographicOperations.ZeroMemory(existing); CryptographicOperations.ZeroMemory(combined);
+    }
 }
 
 public sealed class StateStore
@@ -86,12 +104,17 @@ public sealed class StateStore
                 }
                 var currentVersion = game.Versions.FirstOrDefault(version => version.Id == game.CurrentVersionId);
                 var cachedIconPath = Path.Combine(AppPaths.Data, "cache", "icons", $"{game.Id:N}.png");
+                var encryptedCachedIconPath = Path.Combine(AppPaths.Data, "cache", "icons", $"{game.Id:N}.icon.secure");
                 if (string.IsNullOrWhiteSpace(game.IconRelativePath))
                 {
                     game.IconRelativePath = !string.IsNullOrWhiteSpace(currentVersion?.IconRelativePath)
                         ? currentVersion.IconRelativePath
+                        : File.Exists(encryptedCachedIconPath) ? Path.GetRelativePath(AppPaths.Root, encryptedCachedIconPath)
                         : File.Exists(cachedIconPath) ? Path.GetRelativePath(AppPaths.Root, cachedIconPath) : null;
                 }
+                game.IconRelativePath = EncryptedIconService.EnsureEncrypted(game.IconRelativePath, game.Id);
+                foreach (var iconVersion in game.Versions)
+                    if (!string.IsNullOrWhiteSpace(iconVersion.IconRelativePath)) iconVersion.IconRelativePath = EncryptedIconService.EnsureEncrypted(iconVersion.IconRelativePath, game.Id);
                 if (currentVersion is not null && string.IsNullOrWhiteSpace(currentVersion.IconRelativePath) && !string.IsNullOrWhiteSpace(game.IconRelativePath))
                     currentVersion.IconRelativePath = game.IconRelativePath;
                 foreach (var rule in state.SaveFileRules.Where(item => item.GameId == game.Id && item.SourceKind == "游戏目录"))
@@ -667,7 +690,7 @@ public static class IconExtractionService
         if (!File.Exists(executablePath) || !Path.GetExtension(executablePath).Equals(".exe", StringComparison.OrdinalIgnoreCase)) return null;
         var iconDirectory = Path.Combine(AppPaths.Data, "cache", "icons");
         Directory.CreateDirectory(iconDirectory);
-        var outputPath = Path.Combine(iconDirectory, $"{gameId:N}.png");
+        var outputPath = Path.Combine(iconDirectory, $"{gameId:N}.icon.secure");
         var extracted = ExtractIconEx(executablePath, 0, out var largeIcon, out var smallIcon, 1);
         var icon = largeIcon != IntPtr.Zero ? largeIcon : smallIcon;
         if (extracted == 0 || icon == IntPtr.Zero) return null;
@@ -677,8 +700,9 @@ public static class IconExtractionService
             source.Freeze();
             var encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(source));
-            using var stream = File.Create(outputPath);
+            using var stream = new MemoryStream();
             encoder.Save(stream);
+            EncryptedDataFile.WriteAtomic(outputPath, stream.ToArray(), MasterKeyService.GetOrCreate(AppPaths.SecurityConfigFile));
             return Path.GetRelativePath(AppPaths.Root, outputPath);
         }
         catch (Exception ex)
@@ -699,4 +723,50 @@ public static class IconExtractionService
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DestroyIcon(IntPtr icon);
+}
+
+public static class EncryptedIconService
+{
+    private static readonly Dictionary<string, BitmapSource> Cache = new(StringComparer.OrdinalIgnoreCase);
+
+    public static BitmapSource? Load(string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)) return null;
+        var fullPath = Path.Combine(AppPaths.Root, relativePath);
+        if (!File.Exists(fullPath)) return null;
+        if (Path.GetExtension(fullPath).Equals(".png", StringComparison.OrdinalIgnoreCase)) return new BitmapImage(new Uri(fullPath));
+        lock (Cache)
+        {
+            if (Cache.TryGetValue(fullPath, out var cached)) return cached;
+            var bytes = EncryptedDataFile.Read(fullPath, MasterKeyService.GetOrCreate(AppPaths.SecurityConfigFile));
+            using var stream = new MemoryStream(bytes);
+            var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad; image.StreamSource = stream; image.EndInit(); image.Freeze();
+            CryptographicOperations.ZeroMemory(bytes); Cache[fullPath] = image; return image;
+        }
+    }
+
+    public static string? EnsureEncrypted(string? relativePath, Guid gameId)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)) return null;
+        var fullPath = Path.Combine(AppPaths.Root, relativePath);
+        if (!File.Exists(fullPath) || fullPath.EndsWith(".icon.secure", StringComparison.OrdinalIgnoreCase)) return relativePath;
+        var output = Path.Combine(AppPaths.Data, "cache", "icons", $"{gameId:N}.icon.secure");
+        var plaintext = File.ReadAllBytes(fullPath);
+        var key = MasterKeyService.GetOrCreate(AppPaths.SecurityConfigFile);
+        EncryptedDataFile.WriteAtomic(output, plaintext, key);
+        var verified = EncryptedDataFile.Read(output, key);
+        try
+        {
+            if (!CryptographicOperations.FixedTimeEquals(plaintext, verified))
+                throw new CryptographicException("旧版明文图标迁移后的加密回读校验失败。");
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plaintext);
+            CryptographicOperations.ZeroMemory(verified);
+        }
+        return Path.GetRelativePath(AppPaths.Root, output);
+    }
+
+    public static void ClearMemoryCache() { lock (Cache) Cache.Clear(); }
 }

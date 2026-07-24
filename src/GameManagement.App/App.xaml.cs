@@ -27,8 +27,10 @@ public partial class App : Application
                 return;
             }
             if (passwordRequired && new SecurityWrapperWindow().ShowDialog() != true) { Shutdown(0); return; }
+            AppLogger.FlushPending();
             var startupStore = new StateStore();
             var startupState = startupStore.Load();
+            var legacySensitiveFiles = LegacySensitiveMigrationService.Migrate();
             ThemeService.Apply(startupState.UiSettings.ThemeName);
             if (e.Args.Any(argument => argument.Equals("--scheduled-backup", StringComparison.OrdinalIgnoreCase)))
             {
@@ -57,6 +59,7 @@ public partial class App : Application
             }
             new MainWindow().Show();
             PromptLegacyDatabaseCleanup();
+            PromptLegacySensitiveFilesCleanup(legacySensitiveFiles);
         }
         catch (Exception ex)
         {
@@ -86,6 +89,17 @@ public partial class App : Application
             AppLogger.Error("旧明文数据库删除失败", ex);
             MessageBox.Show($"旧明文数据库未能删除：{ex.Message}", "清理失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private static void PromptLegacySensitiveFilesCleanup(IReadOnlyList<string> files)
+    {
+        var existing = files.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (existing.Count == 0) return;
+        if (MessageBox.Show($"检测到 {existing.Count} 个旧版明文图标或日志，均已迁移到加密文件并通过回读校验。\n\n是否永久删除这些旧明文文件？\n\n选择“否”会保留文件并在下次启动继续提示。", "清理未加密图标与日志", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        var failures = new List<string>();
+        foreach (var path in existing) try { File.Delete(path); } catch (Exception ex) { failures.Add($"{path}：{ex.Message}"); }
+        if (failures.Count > 0) MessageBox.Show($"部分旧明文文件未能删除：\n{string.Join("\n", failures)}", "清理未全部完成", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else AppLogger.Info($"用户确认后已永久删除 {existing.Count} 个旧版明文图标或日志");
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
