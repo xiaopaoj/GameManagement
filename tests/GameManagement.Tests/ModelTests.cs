@@ -2100,7 +2100,7 @@ public sealed class ModelTests
         var wrapperXaml = File.ReadAllText(Path.Combine(appRoot, "SecurityWrapperWindow.xaml"));
 
         Assert.Contains("new SecurityWrapperWindow().ShowDialog()", appSource);
-        Assert.Contains("Title=\"工具箱\"", wrapperXaml);
+        Assert.Contains("Title=\"游戏工具箱\"", wrapperXaml);
         Assert.Contains("Content=\"立即锁定\"", mainXaml);
         Assert.Contains("SecurityLockService.RestartIntoLockedMode", mainSource);
         Assert.Contains("HasRunningTasks()", mainSource);
@@ -2163,6 +2163,26 @@ public sealed class ModelTests
         var mainWindowShutdown = appSource.IndexOf("ShutdownMode = ShutdownMode.OnMainWindowClose;", StringComparison.Ordinal);
         Assert.True(explicitShutdown >= 0 && explicitShutdown < wrapperDialog);
         Assert.True(wrapperDialog < mainWindowAssignment && mainWindowAssignment < mainWindowShutdown);
+    }
+
+    [Fact]
+    public void 包装界面应仅从帮助菜单进入密码验证且工具保持未开放状态()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var wrapperXaml = File.ReadAllText(Path.Combine(appRoot, "SecurityWrapperWindow.xaml"));
+        var wrapperSource = File.ReadAllText(Path.Combine(appRoot, "SecurityWrapperWindow.xaml.cs"));
+        var unlockXaml = File.ReadAllText(Path.Combine(appRoot, "SecurityUnlockWindow.xaml"));
+
+        Assert.DoesNotContain("Content=\"继续\"", wrapperXaml);
+        Assert.Contains("Header=\"帮助\"", wrapperXaml);
+        Assert.Contains("Header=\"检查数据完整性\" Click=\"IntegrityCheck_Click\"", wrapperXaml);
+        Assert.Contains("IntegrityCheck_Click", wrapperSource);
+        Assert.Contains("IsEnabled=\"False\"", wrapperXaml);
+        Assert.Contains("Text=\"即将推出\"", wrapperXaml);
+        Assert.Contains("Title=\"数据完整性检查\"", unlockXaml);
     }
 
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
