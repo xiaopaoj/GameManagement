@@ -2,6 +2,8 @@ using GameManagement.Models;
 using GameManagement.Services;
 using GameManagement.ViewModels;
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 
@@ -1987,6 +1989,52 @@ public sealed class ModelTests
         Assert.Contains("public async Task ContinuePreparationAsync", detailSource);
         Assert.Contains("无法安全续接", detailSource);
         Assert.Contains("BaselineService.BuildAsync", detailSource);
+    }
+
+    [Fact]
+    public void 加密数据文件应支持完整性校验且不泄露明文()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "state.secure");
+        var key = RandomNumberGenerator.GetBytes(32);
+        var plaintext = Encoding.UTF8.GetBytes("敏感游戏名称与路径 D:\\Games\\Secret");
+        try
+        {
+            EncryptedDataFile.WriteAtomic(path, plaintext, key);
+            var encrypted = File.ReadAllBytes(path);
+            Assert.DoesNotContain("敏感游戏名称", Encoding.UTF8.GetString(encrypted));
+            Assert.Equal(plaintext, EncryptedDataFile.Read(path, key));
+            encrypted[^1] ^= 0x5A;
+            File.WriteAllBytes(path, encrypted);
+            Assert.ThrowsAny<CryptographicException>(() => EncryptedDataFile.Read(path, key));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 明文数据库迁移后应保留原文件并优先读取加密数据库()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var securePath = Path.Combine(root, "game-management.secure");
+        var legacyPath = Path.Combine(root, "game-management.json");
+        var configPath = Path.Combine(root, "security.json");
+        var state = new AppState { Games = [new GameItem { DisplayName = "迁移测试游戏" }] };
+        File.WriteAllText(legacyPath, JsonSerializer.Serialize(state), Encoding.UTF8);
+        try
+        {
+            var store = new StateStore(securePath, legacyPath, configPath);
+            var migrated = store.Load();
+            Assert.Equal("迁移测试游戏", Assert.Single(migrated.Games).DisplayName);
+            Assert.True(File.Exists(securePath));
+            Assert.True(File.Exists(legacyPath));
+            Assert.True(File.Exists(configPath));
+            Assert.DoesNotContain("迁移测试游戏", Encoding.UTF8.GetString(File.ReadAllBytes(securePath)));
+            File.WriteAllText(legacyPath, "{}", Encoding.UTF8);
+            Assert.Equal("迁移测试游戏", Assert.Single(store.Load().Games).DisplayName);
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>

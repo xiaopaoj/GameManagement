@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -15,7 +16,9 @@ public static class AppPaths
     public static string Root => Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
     public static string Data => Path.Combine(Root, "data");
     public static string Logs => Path.Combine(Root, "logs");
-    public static string StateFile => Path.Combine(Data, "game-management.json");
+    public static string StateFile => Path.Combine(Data, "game-management.secure");
+    public static string LegacyStateFile => Path.Combine(Data, "game-management.json");
+    public static string SecurityConfigFile => Path.Combine(Data, "security.json");
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(Data); Directory.CreateDirectory(Logs); Directory.CreateDirectory(Path.Combine(Data, "cache"));
@@ -36,12 +39,32 @@ public sealed class StateStore
 {
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
     private static readonly object SaveSync = new();
+    private readonly string _stateFile;
+    private readonly string _legacyStateFile;
+    private readonly string _securityConfigFile;
+
+    public StateStore(string? stateFile = null, string? legacyStateFile = null, string? securityConfigFile = null)
+    {
+        _stateFile = stateFile ?? AppPaths.StateFile;
+        _legacyStateFile = legacyStateFile ?? AppPaths.LegacyStateFile;
+        _securityConfigFile = securityConfigFile ?? AppPaths.SecurityConfigFile;
+    }
+
     public AppState Load()
     {
-        if (!File.Exists(AppPaths.StateFile)) return new AppState();
+        if (!File.Exists(_stateFile) && !File.Exists(_legacyStateFile)) return new AppState();
         try
         {
-            var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(AppPaths.StateFile), Options) ?? new AppState();
+            string json;
+            if (File.Exists(_stateFile)) json = Encoding.UTF8.GetString(EncryptedDataFile.Read(_stateFile, MasterKeyService.GetOrCreate(_securityConfigFile)));
+            else
+            {
+                json = File.ReadAllText(_legacyStateFile, Encoding.UTF8);
+                var migrated = JsonSerializer.Deserialize<AppState>(json, Options) ?? new AppState();
+                Save(migrated);
+                _ = Encoding.UTF8.GetString(EncryptedDataFile.Read(_stateFile, MasterKeyService.GetOrCreate(_securityConfigFile)));
+            }
+            var state = JsonSerializer.Deserialize<AppState>(json, Options) ?? new AppState();
             state.UiSettings ??= new UiSettingsItem();
             if (state.UiSettings.ExtractionEngine is not (ExtractionEngineNames.Auto or ExtractionEngineNames.WinRar or ExtractionEngineNames.BuiltIn))
                 state.UiSettings.ExtractionEngine = ExtractionEngineNames.Auto;
@@ -82,15 +105,14 @@ public sealed class StateStore
             OperationTaskRecoveryService.MarkInterrupted(state);
             return state;
         }
-        catch (Exception ex) { AppLogger.Error("读取数据文件失败", ex); throw new InvalidOperationException("读取软件数据失败，请检查 data 目录中的数据文件。", ex); }
+        catch (Exception ex) { AppLogger.Error("读取加密数据文件失败", ex); throw new InvalidOperationException("读取软件加密数据失败，请检查 data 目录中的安全配置与数据库文件。", ex); }
     }
     public void Save(AppState state)
     {
         lock (SaveSync)
         {
-            var temp = AppPaths.StateFile + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(state, Options));
-            File.Move(temp, AppPaths.StateFile, true);
+            var key = MasterKeyService.GetOrCreate(_securityConfigFile);
+            EncryptedDataFile.WriteAtomic(_stateFile, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(state, Options)), key);
         }
     }
 

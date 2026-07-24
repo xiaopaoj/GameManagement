@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using GameManagement.Services;
@@ -46,11 +47,29 @@ public partial class App : Application
                 return;
             }
             new MainWindow().Show();
+            PromptLegacyDatabaseCleanup();
         }
         catch (Exception ex)
         {
             MessageBox.Show($"软件初始化失败：{ex.Message}\n请确认程序所在目录具有写入权限。", "启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(-1);
+        }
+    }
+
+    private static void PromptLegacyDatabaseCleanup()
+    {
+        if (!File.Exists(AppPaths.LegacyStateFile) || !File.Exists(AppPaths.StateFile)) return;
+        var result = MessageBox.Show("现有明文数据库已经完成加密迁移并通过回读校验。\n\n是否永久删除旧的明文数据库？\n\n选择“否”会保留旧文件，但旧文件中的游戏名称、路径等信息仍可被直接查看，软件下次启动会继续提示。", "清理未加密历史数据", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes) return;
+        try
+        {
+            File.Delete(AppPaths.LegacyStateFile);
+            AppLogger.Info("用户确认后已永久删除迁移完成的旧明文数据库");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("旧明文数据库删除失败", ex);
+            MessageBox.Show($"旧明文数据库未能删除：{ex.Message}", "清理失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
