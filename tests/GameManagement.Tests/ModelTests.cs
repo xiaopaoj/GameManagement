@@ -2203,6 +2203,23 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 游戏主进程运行期间应阻止手动与空闲自动锁定()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var mainSource = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var servicesSource = File.ReadAllText(Path.Combine(appRoot, "Services", "AppServices.cs"));
+
+        Assert.Contains("public static bool HasRunningGame(IEnumerable<GameItem> games)", servicesSource);
+        Assert.Contains("if (HasRunningGames())", mainSource);
+        Assert.Contains("HasRunningGames() || HasRunningTasks()", mainSource);
+        Assert.Contains("GameProcessMonitorService.HasRunningGame(viewModel.Games)", mainSource);
+        Assert.Contains("请先退出游戏后再锁定", mainSource);
+    }
+
+    [Fact]
     public void 包装界面应仅从帮助菜单进入密码验证且工具保持未开放状态()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);

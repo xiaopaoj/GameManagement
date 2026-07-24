@@ -632,6 +632,22 @@ public static class GameProcessMonitorService
         }
     }
 
+    public static bool HasRunningGame(IEnumerable<GameItem> games)
+    {
+        foreach (var game in games.Where(game => game.RunningProcessId.HasValue || game.Status == "运行中"))
+        {
+            if (game.RunningProcessId is not int processId) continue;
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                if (!process.HasExited && MatchesRecordedProcess(game, process)) return true;
+            }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+        }
+        return false;
+    }
+
     private static void Track(GameItem game, Process process, Action<GameItem, string> stateChanged)
     {
         process.EnableRaisingEvents = true;

@@ -150,6 +150,7 @@ public partial class MainWindow : Window
     private void LockNow_Click(object sender, RoutedEventArgs e)
     {
         if (!MasterKeyService.IsPasswordRequired(AppPaths.SecurityConfigFile)) { MessageBox.Show(this, "安全密码模式尚未开启。", "无法锁定", MessageBoxButton.OK, MessageBoxImage.Information); return; }
+        if (HasRunningGames()) { MessageBox.Show(this, "检测到仍在运行的主游戏程序，请先退出游戏后再锁定。", "游戏运行中", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
         if (HasRunningTasks()) { MessageBox.Show(this, "存在运行中的软件任务，请等待任务完成或取消后再锁定。", "任务运行中", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
         SecurityLockService.RestartIntoLockedMode();
     }
@@ -157,9 +158,10 @@ public partial class MainWindow : Window
     private void SecurityIdleTimer_Tick(object? sender, EventArgs e)
     {
         var minutes = Math.Max(1, MasterKeyService.LoadConfiguration(AppPaths.SecurityConfigFile).AutoLockMinutes);
-        if (DateTime.UtcNow - _lastUserActivity < TimeSpan.FromMinutes(minutes) || HasRunningTasks()) return;
+        if (DateTime.UtcNow - _lastUserActivity < TimeSpan.FromMinutes(minutes) || HasRunningGames() || HasRunningTasks()) return;
         _securityIdleTimer.Stop(); SecurityLockService.RestartIntoLockedMode();
     }
 
     private bool HasRunningTasks() => DataContext is MainViewModel { Tasks: var tasks } && tasks.Any(task => task.Status == "运行中");
+    private bool HasRunningGames() => DataContext is MainViewModel viewModel && GameProcessMonitorService.HasRunningGame(viewModel.Games);
 }
