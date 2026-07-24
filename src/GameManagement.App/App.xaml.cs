@@ -26,7 +26,12 @@ public partial class App : Application
                 Shutdown(0);
                 return;
             }
-            if (passwordRequired && new SecurityWrapperWindow().ShowDialog() != true) { Shutdown(0); return; }
+            if (passwordRequired)
+            {
+                // 包装窗口关闭到真实主窗口创建之间不能触发 WPF 的“最后窗口关闭即退出”。
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                if (new SecurityWrapperWindow().ShowDialog() != true) { Shutdown(0); return; }
+            }
             AppLogger.FlushPending();
             var startupStore = new StateStore();
             var startupState = startupStore.Load();
@@ -57,7 +62,10 @@ public partial class App : Application
                 Shutdown(result.Status == "失败" ? 1 : 0);
                 return;
             }
-            new MainWindow().Show();
+            var mainWindow = new MainWindow();
+            MainWindow = mainWindow;
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
+            mainWindow.Show();
             PromptLegacyDatabaseCleanup();
             PromptLegacySensitiveFilesCleanup(legacySensitiveFiles);
         }

@@ -95,7 +95,7 @@
 
 ## 1.0.0 验收结果
 
-- Release 自动化测试：109 项全部通过。
+- Release 自动化测试：110 项全部通过。
 - 图形界面启动冒烟：通过。
 - `--scheduled-backup` 无界面计划备份冒烟：通过，退出码为 0。
 - 最新发布产物：`D:\workspace\GameManagement\build\release\GameManagement.exe`。

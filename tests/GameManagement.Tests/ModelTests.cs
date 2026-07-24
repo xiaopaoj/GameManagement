@@ -2149,6 +2149,22 @@ public sealed class ModelTests
         Assert.Contains("是否永久删除这些旧明文文件", appSource);
     }
 
+    [Fact]
+    public void 安全包装窗口解锁后应保持应用存活直到真实主窗口接管()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appSource = File.ReadAllText(Path.Combine(root!.FullName, "src", "GameManagement.App", "App.xaml.cs"));
+
+        var explicitShutdown = appSource.IndexOf("ShutdownMode = ShutdownMode.OnExplicitShutdown;", StringComparison.Ordinal);
+        var wrapperDialog = appSource.IndexOf("new SecurityWrapperWindow().ShowDialog()", StringComparison.Ordinal);
+        var mainWindowAssignment = appSource.IndexOf("MainWindow = mainWindow;", StringComparison.Ordinal);
+        var mainWindowShutdown = appSource.IndexOf("ShutdownMode = ShutdownMode.OnMainWindowClose;", StringComparison.Ordinal);
+        Assert.True(explicitShutdown >= 0 && explicitShutdown < wrapperDialog);
+        Assert.True(wrapperDialog < mainWindowAssignment && mainWindowAssignment < mainWindowShutdown);
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);
