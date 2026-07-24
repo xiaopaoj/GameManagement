@@ -80,6 +80,8 @@ public sealed class MainViewModel : ObservableObject
     public ICommand CleanupTaskTempCommand { get; }
     public ICommand OpenTaskGameCommand { get; }
     public ICommand ShowTaskErrorCommand { get; }
+    public ICommand RestartPreparationCommand { get; }
+    public ICommand ContinuePreparationCommand { get; }
 
     public MainViewModel()
     {
@@ -91,6 +93,7 @@ public sealed class MainViewModel : ObservableObject
         OpenGameDetailsCommand = new RelayCommand(OpenSelectedGameDetails);
         LaunchGameCommand = new RelayCommand(LaunchGame); OpenGameFolderCommand = new RelayCommand(OpenGameFolder); ReloadCommand = new RelayCommand(Reload);
         OpenTaskFolderCommand = new RelayCommand(OpenTaskFolder); CleanupTaskTempCommand = new RelayCommand(CleanupTaskTemp); OpenTaskGameCommand = new RelayCommand(OpenTaskGame); ShowTaskErrorCommand = new RelayCommand(ShowTaskError);
+        RestartPreparationCommand = new AsyncRelayCommand(RestartSelectedPreparationAsync); ContinuePreparationCommand = new AsyncRelayCommand(ContinueSelectedPreparationAsync);
         GameProcessMonitorService.Restore(_state.Games, OnGameStateChanged);
         _ = TryRunPendingBackupAsync();
     }
@@ -644,7 +647,47 @@ public sealed class MainViewModel : ObservableObject
         MessageBox.Show(detail, $"任务详情 - {SelectedTask.Name}", MessageBoxButton.OK, SelectedTask.Status == "失败" ? MessageBoxImage.Error : MessageBoxImage.Information);
     }
 
-    private void Reload() { _state = _store.Load(); LoadCollections(); _store.Save(_state); StatusMessage = "数据已刷新"; }
+    private async Task RestartSelectedPreparationAsync()
+    {
+        var context = GetRecoverablePreparationTask();
+        if (context is null) return;
+        var (task, game) = context.Value;
+        var host = new GameDetailWindow(game, _state, SaveAndRefreshGameLibrary, OnGameStateChanged, directActionHost: true) { Owner = Application.Current.MainWindow };
+        await host.RestartPreparationAsync(task);
+        CollectionViewSource.GetDefaultView(Tasks).Refresh();
+        CollectionViewSource.GetDefaultView(Games).Refresh();
+    }
+
+    private async Task ContinueSelectedPreparationAsync()
+    {
+        var context = GetRecoverablePreparationTask();
+        if (context is null) return;
+        var (task, game) = context.Value;
+        var host = new GameDetailWindow(game, _state, SaveAndRefreshGameLibrary, OnGameStateChanged, directActionHost: true) { Owner = Application.Current.MainWindow };
+        await host.ContinuePreparationAsync(task);
+        CollectionViewSource.GetDefaultView(Tasks).Refresh();
+        CollectionViewSource.GetDefaultView(Games).Refresh();
+    }
+
+    private (OperationTaskItem Task, GameItem Game)? GetRecoverablePreparationTask()
+    {
+        var task = SelectedTask;
+        if (task is null || task.TaskType != "准备游玩" || task.Status is not ("失败" or "已取消" or "已中断"))
+        {
+            ShowError("请选择一条状态为失败、已取消或已中断的准备游玩任务。");
+            return null;
+        }
+        var game = task.GameId is Guid gameId ? _state.Games.FirstOrDefault(item => item.Id == gameId) : null;
+        if (game is null) { ShowError("该任务关联的游戏记录不存在。"); return null; }
+        if (_state.OperationTasks.Any(item => item.GameId == game.Id && item.Status == "运行中")) { ShowError("该游戏已有任务正在运行。"); return null; }
+        return (task, game);
+    }
+
+    private void Reload()
+    {
+        if (_state.OperationTasks.Any(task => task.Status == "运行中")) { ShowError("存在运行中的任务，禁止刷新数据。请等待任务完成或取消后再试。"); return; }
+        _state = _store.Load(); LoadCollections(); _store.Save(_state); StatusMessage = "数据已刷新";
+    }
     private void Save(string message) { _store.Save(_state); StatusMessage = message; AppLogger.Info(message); }
     private static void ShowError(string message) => MessageBox.Show(message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
 }

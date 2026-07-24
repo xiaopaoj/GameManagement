@@ -1968,6 +1968,27 @@ public sealed class ModelTests
         Assert.Contains("MinHeight=\"36\"", inputXaml);
     }
 
+    [Fact]
+    public void 失败准备任务应提供重新发起和安全续接入口()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var viewModelSource = File.ReadAllText(Path.Combine(appRoot, "ViewModels", "MainViewModel.cs"));
+        var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
+
+        Assert.Contains("Content=\"重新发起准备\" Command=\"{Binding RestartPreparationCommand}\"", mainXaml);
+        Assert.Contains("Content=\"从失败处继续准备\" Command=\"{Binding ContinuePreparationCommand}\"", mainXaml);
+        Assert.Contains("task.Status is not (\"失败\" or \"已取消\" or \"已中断\")", viewModelSource);
+        Assert.Contains("存在运行中的任务，禁止刷新数据", viewModelSource);
+        Assert.Contains("public async Task RestartPreparationAsync", detailSource);
+        Assert.Contains("public async Task ContinuePreparationAsync", detailSource);
+        Assert.Contains("无法安全续接", detailSource);
+        Assert.Contains("BaselineService.BuildAsync", detailSource);
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

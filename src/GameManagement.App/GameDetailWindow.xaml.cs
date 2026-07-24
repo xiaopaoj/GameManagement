@@ -99,6 +99,95 @@ public partial class GameDetailWindow : Window
 
     private async void Prepare_Click(object sender, RoutedEventArgs e) => await PrepareAsync();
 
+    public async Task RestartPreparationAsync(OperationTaskItem failedTask)
+    {
+        var disk = ResolvePreparationDisk(failedTask);
+        if (disk is null) { ShowError("无法从失败任务定位原游戏盘，请确认游戏盘仍处于启用状态。 "); return; }
+        var gameContainer = Path.Combine(disk.RootPath, "Games", _game.Id.ToString());
+        var finalTarget = Path.Combine(gameContainer, "content");
+        var workRoot = Path.Combine(gameContainer, ".prepare");
+        var existing = new List<string>();
+        if (Directory.Exists(finalTarget)) existing.Add($"可游玩结果（移入回收站）：{finalTarget}");
+        if (Directory.Exists(workRoot)) existing.Add($"准备临时目录（永久删除）：{workRoot}");
+        if (MessageBox.Show(DialogOwner, $"将从头重新执行准备流程。旧结果不会直接覆盖。\n\n{string.Join("\n", existing.DefaultIfEmpty("没有检测到旧目录。"))}\n\n是否继续？", "重新发起准备确认", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        try
+        {
+            if (Directory.Exists(finalTarget)) RecycleBinService.MoveDirectory(finalTarget);
+            if (Directory.Exists(workRoot)) Directory.Delete(workRoot, true);
+            _game.PlayableRootPath = null; _game.CurrentGameDiskId = null; _game.ExecutableRelativePath = null; _game.Status = "未准备";
+            failedTask.Message = "用户已选择从头重新发起准备。"; _save(failedTask.Message);
+            await PrepareAsync();
+        }
+        catch (Exception ex) { ShowError($"旧准备目录清理失败，未重新发起：{ex.Message}"); }
+    }
+
+    public async Task ContinuePreparationAsync(OperationTaskItem failedTask)
+    {
+        var version = _game.Versions.FirstOrDefault(item => item.Id == failedTask.GameVersionId) ?? _game.Versions.FirstOrDefault(item => item.Id == _game.CurrentVersionId);
+        var disk = ResolvePreparationDisk(failedTask);
+        if (version is null || disk is null) { ShowError("无法定位失败任务对应的游戏版本或游戏盘。"); return; }
+        var gameContainer = Path.Combine(disk.RootPath, "Games", _game.Id.ToString());
+        var finalTarget = Path.Combine(gameContainer, "content");
+        var step2 = Path.Combine(gameContainer, ".prepare", "step2");
+        string scanRoot;
+        var alreadyCommitted = Directory.Exists(finalTarget);
+        if (alreadyCommitted) scanRoot = finalTarget;
+        else if (Directory.Exists(step2)) scanRoot = step2;
+        else { ShowError("失败任务尚未形成可验证的二次解压结果，无法安全续接。请使用“重新发起准备”。"); return; }
+
+        var recoveryTask = new OperationTaskItem { Name = $"继续准备：{_game.DisplayName}", TaskType = "准备游玩", GameId = _game.Id, GameVersionId = version.Id, Status = "运行中", Progress = 75, Message = "正在验证失败任务保留的游戏目录", WorkingDirectory = Path.Combine(gameContainer, ".prepare") };
+        _state.OperationTasks.Add(recoveryTask); _game.Status = "准备中"; _save("已从失败任务发起继续准备");
+        var progress = new PreparationProgressWindow { Owner = DialogOwner };
+        ShowProgress(progress); IsEnabled = false;
+        try
+        {
+            var discovery = await Task.Run(() => ExecutableDiscoveryService.Discover(scanRoot, default, _state.UiSettings.ExecutableIgnoreNames));
+            if (discovery is null) throw new InvalidOperationException("保留目录中未找到有效游戏 EXE，无法确认二次解压已经完整完成。");
+            var selectedGameRoot = alreadyCommitted ? finalTarget : discovery.GameRoot;
+            var selection = ExecutableDiscoveryService.ResolveRecordedSelection(scanRoot, version.ExecutableRelativePath, discovery.GameRoot, _state.UiSettings.ExecutableIgnoreNames);
+            if (selection is null && discovery.Candidates.Count == 1) selection = new GameLaunchSelection(discovery.GameRoot, discovery.Candidates[0].Path);
+            progress.UpdateStatus("正在重新建立游戏文件基线…", 85);
+            var baselines = await BaselineService.BuildAsync(_game.Id, version.Id, selectedGameRoot);
+            _state.FileBaselines.RemoveAll(item => item.GameVersionId == version.Id); _state.FileBaselines.AddRange(baselines);
+            if (!alreadyCommitted)
+            {
+                Directory.CreateDirectory(gameContainer);
+                if (Directory.Exists(finalTarget)) throw new IOException($"目标游戏目录已经存在：{finalTarget}");
+                Directory.Move(selectedGameRoot, finalTarget);
+            }
+            var executableRelativePath = selection is null ? null : Path.GetRelativePath(discovery.GameRoot, selection.LaunchFile);
+            version.GameDiskId = disk.Id; version.ExecutableRelativePath = executableRelativePath;
+            _game.CurrentGameDiskId = disk.Id; _game.PlayableRootPath = finalTarget; _game.ExecutableRelativePath = executableRelativePath;
+            if (_game.HasLocalSave) await SaveRestoreService.RestoreCurrentAsync(_state, _game, version, finalTarget);
+            var executable = string.IsNullOrWhiteSpace(executableRelativePath) ? null : Path.Combine(finalTarget, executableRelativePath);
+            var icon = executable is null ? null : IconExtractionService.ExtractToCache(executable, _game.Id);
+            if (!string.IsNullOrWhiteSpace(icon)) { version.IconRelativePath = icon; _game.IconRelativePath = icon; }
+            _game.Status = "可游玩"; _game.ArchiveStatus = "未归档"; _game.DirectoryCleanupStatus = "目录存在"; _game.ArchiveMessage = string.Empty;
+            recoveryTask.Status = "完成"; recoveryTask.Progress = 100; recoveryTask.CurrentPath = finalTarget; recoveryTask.CompletedAt = DateTime.Now; recoveryTask.Message = $"继续准备完成，共重新建立 {baselines.Count} 个文件基线";
+            failedTask.Message = $"已由继续准备任务 {recoveryTask.Id} 成功恢复。"; _save(recoveryTask.Message); RefreshBindings();
+            RestoreAfterProgressDialog(progress); MessageBox.Show(DialogOwner, "已从保留结果继续完成游戏准备。", "继续准备完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            recoveryTask.Status = "失败"; recoveryTask.Message = ex.Message; recoveryTask.ErrorMessage = ex.ToString(); recoveryTask.CompletedAt = DateTime.Now; _game.Status = "操作失败"; _save("继续准备失败");
+            RestoreAfterProgressDialog(progress); MessageBox.Show(DialogOwner, $"无法从保留结果继续准备：{ex.Message}\n\n可以改用“重新发起准备”。", "继续准备失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally { WindowInteractionService.CompleteProgress(DialogOwner, progress); }
+    }
+
+    private GameDiskItem? ResolvePreparationDisk(OperationTaskItem task)
+    {
+        static bool IsWithin(string root, string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            return Path.GetFullPath(path).StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+        }
+        return _state.GameDisks.Where(item => item.Enabled && Directory.Exists(item.RootPath))
+            .FirstOrDefault(item => IsWithin(item.RootPath, task.WorkingDirectory) || IsWithin(item.RootPath, task.CurrentPath)
+                || Directory.Exists(Path.Combine(item.RootPath, "Games", _game.Id.ToString())));
+    }
+
     private async Task PrepareAsync()
     {
         if (_game.Status is "准备中" or "归档中") { ShowError("该游戏已有准备或归档任务正在运行。"); return; }
@@ -349,7 +438,7 @@ public partial class GameDetailWindow : Window
             _game.Status = _versionSwitchInProgress ? "版本切换失败" : "操作失败"; _versionSwitchInProgress = false; _save("准备任务失败，临时目录已保留");
             AppLogger.Error($"准备游戏失败：{_game.DisplayName}", ex);
             RestoreAfterProgressDialog(progress);
-            MessageBox.Show(DialogOwner, $"游戏准备失败：{ex.Message}\n\n临时目录已保留：\n{workRoot}", "准备失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(DialogOwner, $"游戏准备失败：{ex.Message}\n\n临时目录已保留：\n{workRoot}\n\n可在任务中心选择“从失败处继续准备”或“重新发起准备”。", "准备失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
