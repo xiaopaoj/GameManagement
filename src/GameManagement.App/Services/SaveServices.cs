@@ -35,8 +35,10 @@ public static class SaveChangeDetectionService
             .ToDictionary(item => NormalizeRelativePath(item.RelativePath), StringComparer.OrdinalIgnoreCase);
         if (baselines.Count == 0) throw new InvalidOperationException("当前版本没有文件基线，禁止自动判断存档文件。");
 
-        var confirmed = state.SaveFileRules.Where(item => item.GameId == game.Id && item.SourceKind == "游戏目录")
-            .Select(item => NormalizeRelativePath(item.RelativePath)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var confirmedRules = state.SaveFileRules.Where(item => item.GameId == game.Id && item.SourceKind == "游戏目录")
+            .GroupBy(item => NormalizeRelativePath(item.RelativePath), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
+        var confirmed = confirmedRules.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var excluded = state.SaveFileExclusions.Where(item => item.GameId == game.Id && item.SourceKind == "游戏目录")
             .Select(item => NormalizeRelativePath(item.RelativePath)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var remainingBaselines = new HashSet<string>(baselines.Keys, StringComparer.OrdinalIgnoreCase);
@@ -48,6 +50,17 @@ public static class SaveChangeDetectionService
             var relativePath = NormalizeRelativePath(Path.GetRelativePath(game.PlayableRootPath, file));
             var info = new FileInfo(file);
             baselines.TryGetValue(relativePath, out var baseline);
+            if (confirmedRules.TryGetValue(relativePath, out var confirmedRule) && TryGetArchivedPath(state, game, confirmedRule, out var archivedPath))
+            {
+                remainingBaselines.Remove(relativePath);
+                if (File.Exists(archivedPath))
+                {
+                    var archivedInfo = new FileInfo(archivedPath);
+                    if (archivedInfo.Length == info.Length && Math.Abs((archivedInfo.LastWriteTime - info.LastWriteTime).TotalSeconds) < 1) continue;
+                }
+                result.Add(CreateCandidate(game, versionId, snapshotKind, file, relativePath, baseline is null ? "新增" : "修改", info, string.Empty, baseline is not null, confirmed, excluded));
+                continue;
+            }
             if (baseline is not null)
             {
                 remainingBaselines.Remove(relativePath);
@@ -68,6 +81,7 @@ public static class SaveChangeDetectionService
             token.ThrowIfCancellationRequested();
             var baseline = baselines[relativePath];
             var expectedPath = Path.Combine(game.PlayableRootPath, relativePath);
+            if (confirmedRules.TryGetValue(relativePath, out var confirmedRule) && TryGetArchivedPath(state, game, confirmedRule, out var archivedPath) && !File.Exists(archivedPath)) continue;
             result.Add(CreateCandidate(game, versionId, snapshotKind, expectedPath, relativePath, "删除", null, string.Empty, true, confirmed, excluded, baseline.FileSize, baseline.ModifiedAt));
         }
         return result.OrderBy(item => item.RelativePath, StringComparer.CurrentCultureIgnoreCase).ToList();
@@ -115,6 +129,21 @@ public static class SaveChangeDetectionService
     }
 
     private static string NormalizeRelativePath(string path) => path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
+
+    private static bool TryGetArchivedPath(AppState state, GameItem game, SaveFileRuleItem rule, out string path)
+    {
+        path = string.Empty;
+        try
+        {
+            var storageRelativePath = string.IsNullOrWhiteSpace(rule.StorageRelativePath) ? rule.RelativePath : rule.StorageRelativePath;
+            path = Path.Combine(GameSavePathService.GetCurrentDirectory(state, game), NormalizeRelativePath(storageRelativePath));
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
 }
 
 public sealed record SaveSnapshotCreationResult(SaveSnapshotItem? Snapshot, bool ContentChanged, int AppliedCount);

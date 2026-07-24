@@ -262,5 +262,7 @@ public partial class SaveManagementWindow : Window
         }
     }
 
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
     private static void ShowError(string message) => MessageBox.Show(message, "操作失败", MessageBoxButton.OK, MessageBoxImage.Error);
 }

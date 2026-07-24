@@ -1221,6 +1221,55 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public async Task 已确认存档后续扫描应与Current副本快速比较并跳过重复Hash()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var playable = Path.Combine(root, "playable");
+        var diskRoot = Path.Combine(root, "disk");
+        Directory.CreateDirectory(playable); Directory.CreateDirectory(diskRoot);
+        var disk = new GameDiskItem { RootPath = diskRoot };
+        var versionId = Guid.NewGuid();
+        var game = new GameItem { DisplayName = "快速比较测试", PlayableRootPath = playable, CurrentGameDiskId = disk.Id, CurrentVersionId = versionId };
+        var state = new AppState { Games = [game], GameDisks = [disk] };
+        try
+        {
+            var source = Path.Combine(playable, "save.dat");
+            await File.WriteAllTextAsync(source, "游戏初始文件");
+            state.FileBaselines = await BaselineService.BuildAsync(game.Id, versionId, playable);
+            await File.WriteAllTextAsync(source, "第一次存档内容");
+            File.SetLastWriteTime(source, DateTime.Now.AddSeconds(2));
+
+            var firstCandidates = await SaveChangeDetectionService.DetectAsync(state, game, SaveSnapshotKinds.Normal);
+            var first = Assert.Single(firstCandidates);
+            state.SaveCandidates.Add(first);
+            await SaveSnapshotService.ApplyAndCreateAsync(state, game, [first.Id]);
+
+            var unchanged = await SaveChangeDetectionService.DetectAsync(state, game, SaveSnapshotKinds.Normal);
+            Assert.Empty(unchanged);
+
+            await File.WriteAllTextAsync(source, "第二次存档内容已经发生变化");
+            var changed = Assert.Single(await SaveChangeDetectionService.DetectAsync(state, game, SaveSnapshotKinds.Normal));
+            Assert.True(changed.PreviouslyConfirmed);
+            Assert.Empty(changed.Sha256);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void 自动弹出的存档候选窗口应使用显式关闭事件()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var xaml = File.ReadAllText(Path.Combine(appRoot, "SaveManagementWindow.xaml"));
+        var source = File.ReadAllText(Path.Combine(appRoot, "SaveManagementWindow.xaml.cs"));
+
+        Assert.Contains("Content=\"关闭\" IsCancel=\"True\" Click=\"Close_Click\"", xaml);
+        Assert.Contains("private void Close_Click", source);
+    }
+
+    [Fact]
     public async Task 同类快照超过三个时只标记建议清理不自动删除()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
