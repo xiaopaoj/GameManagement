@@ -32,6 +32,7 @@ public static class LegacySensitiveMigrationService
         if (Directory.Exists(iconDirectory)) legacyFiles.AddRange(Directory.EnumerateFiles(iconDirectory, "*.png"));
         foreach (var path in legacyFiles.Where(path => !migrated.Contains(Path.GetFullPath(path))))
         {
+            var migrationCompleted = false;
             if (Path.GetExtension(path).Equals(".log", StringComparison.OrdinalIgnoreCase))
             {
                 var target = Path.Combine(AppPaths.Logs, Path.GetFileNameWithoutExtension(path) + ".securelog");
@@ -39,15 +40,17 @@ public static class LegacySensitiveMigrationService
                 var legacy = File.ReadAllBytes(path); var combined = new byte[previous.Length + legacy.Length];
                 Buffer.BlockCopy(previous, 0, combined, 0, previous.Length); Buffer.BlockCopy(legacy, 0, combined, previous.Length, legacy.Length);
                 EncryptedDataFile.WriteAtomic(target, combined, key); CryptographicOperations.ZeroMemory(previous); CryptographicOperations.ZeroMemory(legacy); CryptographicOperations.ZeroMemory(combined);
+                migrationCompleted = true;
             }
             else if (Guid.TryParseExact(Path.GetFileNameWithoutExtension(path), "N", out var gameId))
             {
                 _ = EncryptedIconService.EnsureEncrypted(Path.GetRelativePath(AppPaths.Root, path), gameId);
+                migrationCompleted = true;
             }
-            migrated.Add(Path.GetFullPath(path));
+            if (migrationCompleted) migrated.Add(Path.GetFullPath(path));
         }
         configuration.MigratedLegacyFiles = migrated.ToList(); MasterKeyService.WriteConfigurationAtomic(AppPaths.SecurityConfigFile, configuration);
-        return legacyFiles.Where(File.Exists).ToList();
+        return legacyFiles.Where(path => migrated.Contains(Path.GetFullPath(path)) && File.Exists(path)).ToList();
     }
 }
 

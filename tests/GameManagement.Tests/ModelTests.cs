@@ -2143,6 +2143,8 @@ public sealed class ModelTests
 
         Assert.Contains("EncryptedIconService.ClearMemoryCache()", lockSource);
         Assert.Contains("MigratedLegacyFiles", securitySource);
+        Assert.Contains("if (migrationCompleted) migrated.Add", securitySource);
+        Assert.Contains("migrated.Contains(Path.GetFullPath(path)) && File.Exists(path)", securitySource);
         Assert.Contains("PromptLegacySensitiveFilesCleanup", appSource);
         Assert.Contains("是否永久删除这些旧明文文件", appSource);
     }
