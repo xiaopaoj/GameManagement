@@ -36,15 +36,15 @@
                 <Grid Margin="10">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8"><Button Content="查看详情" Command="{Binding OpenGameDetailsCommand}"/><Button Content="启动游戏" Command="{Binding LaunchGameCommand}"/><Button Content="打开游戏目录" Command="{Binding OpenGameFolderCommand}"/><Button Content="刷新" Command="{Binding ReloadCommand}"/></StackPanel>
-                    <DataGrid x:Name="GameGrid" Grid.Row="1" ItemsSource="{Binding Games}" SelectedItem="{Binding SelectedGame}" SelectionMode="Extended" SelectionUnit="FullRow" MouseDoubleClick="GameGrid_MouseDoubleClick" PreviewMouseRightButtonDown="GameGrid_PreviewMouseRightButtonDown" RowHeight="54" ColumnHeaderHeight="40" FontSize="14" CellStyle="{StaticResource GameLibraryCellStyle}" ColumnHeaderStyle="{StaticResource GameLibraryHeaderStyle}">
+                    <DataGrid x:Name="GameGrid" Grid.Row="1" ItemsSource="{Binding Games}" SelectedItem="{Binding SelectedGame}" SelectionMode="Extended" SelectionUnit="FullRow" PreviewMouseRightButtonDown="GameGrid_PreviewMouseRightButtonDown" RowHeight="54" ColumnHeaderHeight="40" FontSize="14" CellStyle="{StaticResource GameLibraryCellStyle}" ColumnHeaderStyle="{StaticResource GameLibraryHeaderStyle}">
                         <DataGrid.ContextMenu>
                             <ContextMenu Opened="GameContextMenu_Opened">
+                                <MenuItem x:Name="PrepareContextMenuItem" Header="准备游戏" Tag="准备游玩" FontWeight="SemiBold" Click="GameContextMenu_Click"/>
+                                <Separator/>
                                 <MenuItem Header="查看详情" Click="GameContextMenu_Click"/>
                                 <MenuItem x:Name="SystemSaveContextMenuItem" Header="存在 Windows 系统目录存档" IsCheckable="True" Click="SystemSaveContextMenuItem_Click"/>
                                 <Separator/>
-                                <MenuItem x:Name="PrepareContextMenuItem" Header="准备游玩" Tag="准备游玩" Click="GameContextMenu_Click"/>
                                 <MenuItem Header="编辑名称与备注" Tag="编辑名称与备注" Click="GameContextMenu_Click"/>
-                                <MenuItem Header="启动游戏" Tag="启动游戏" Click="GameContextMenu_Click"/>
                                 <MenuItem x:Name="ArchiveContextMenuItem" Header="归档游戏" Tag="归档游戏" Click="GameContextMenu_Click"/>
                                 <MenuItem Header="特殊归档" Tag="特殊归档" Click="GameContextMenu_Click"/>
                                 <MenuItem Header="手动备份" Tag="手动备份" Click="GameContextMenu_Click"/>

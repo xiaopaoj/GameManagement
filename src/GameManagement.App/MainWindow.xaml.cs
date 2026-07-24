@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -22,11 +23,6 @@ public partial class MainWindow : Window
         _securityIdleTimer.Tick += SecurityIdleTimer_Tick;
         if (MasterKeyService.IsPasswordRequired(AppPaths.SecurityConfigFile)) _securityIdleTimer.Start();
         Closed += (_, _) => _securityIdleTimer.Stop();
-    }
-
-    private void GameGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        if (DataContext is MainViewModel viewModel && viewModel.LaunchGameCommand.CanExecute(null)) viewModel.LaunchGameCommand.Execute(null);
     }
 
     private void GameGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -62,6 +58,9 @@ public partial class MainWindow : Window
         {
             SystemSaveContextMenuItem.IsChecked = viewModel.SelectedGame?.HasSystemSave == true;
             var multiple = GameGrid.SelectedItems.Count > 1;
+            var prepared = !multiple && viewModel.SelectedGame is { PlayableRootPath: { Length: > 0 } playableRoot } && Directory.Exists(playableRoot);
+            PrepareContextMenuItem.Header = prepared ? "启动游戏" : "准备游戏";
+            PrepareContextMenuItem.Tag = prepared ? "启动游戏" : "准备游玩";
             if (sender is System.Windows.Controls.ContextMenu menu)
             {
                 foreach (var menuItem in menu.Items.OfType<System.Windows.Controls.MenuItem>())

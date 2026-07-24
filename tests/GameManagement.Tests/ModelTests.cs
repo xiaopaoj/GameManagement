@@ -963,6 +963,7 @@ public sealed class ModelTests
         Assert.NotNull(root);
         var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
         var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var mainSource = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
         var dialogXaml = File.ReadAllText(Path.Combine(appRoot, "ExecutableIgnoreListWindow.xaml"));
         var dialogSource = File.ReadAllText(Path.Combine(appRoot, "ExecutableIgnoreListWindow.xaml.cs"));
         var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
@@ -1922,16 +1923,37 @@ public sealed class ModelTests
         Assert.NotNull(root);
         var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
         var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var mainSource = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
         var detailSource = File.ReadAllText(Path.Combine(appRoot, "GameDetailWindow.xaml.cs"));
         var deletionXaml = File.ReadAllText(Path.Combine(appRoot, "GameRecordDeletionWindow.xaml"));
 
         foreach (var action in new[] { "准备游玩", "编辑名称与备注", "启动游戏", "归档游戏", "特殊归档", "手动备份", "存档目录设置", "存档与快照", "版本管理", "解压密码管理", "识别游戏目录", "重新定位原始文件", "删除原始文件", "删除游戏主记录", "打开原始位置", "打开游戏目录" })
         {
-            Assert.Contains($"Tag=\"{action}\"", mainXaml);
+            Assert.True(mainXaml.Contains($"Tag=\"{action}\"") || mainSource.Contains($"? \"{action}\""), $"右键菜单缺少操作：{action}");
             Assert.Contains($"case \"{action}\"", detailSource);
         }
         Assert.Contains("PreviewMouseRightButtonDown=\"GameGrid_PreviewMouseRightButtonDown\"", mainXaml);
+        Assert.DoesNotContain("MouseDoubleClick=", mainXaml);
         Assert.Contains("x:Name=\"CopyGameNameText\" IsReadOnly=\"True\"", deletionXaml);
+    }
+
+    [Fact]
+    public void 游戏库单选右键首项应按准备状态切换且列表不再响应双击()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var mainSource = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+
+        var primaryIndex = mainXaml.IndexOf("x:Name=\"PrepareContextMenuItem\"", StringComparison.Ordinal);
+        var detailsIndex = mainXaml.IndexOf("Header=\"查看详情\"", StringComparison.Ordinal);
+        Assert.True(primaryIndex >= 0 && primaryIndex < detailsIndex);
+        Assert.Contains("PrepareContextMenuItem.Header = prepared ? \"启动游戏\" : \"准备游戏\"", mainSource);
+        Assert.Contains("PrepareContextMenuItem.Tag = prepared ? \"启动游戏\" : \"准备游玩\"", mainSource);
+        Assert.DoesNotContain("MouseDoubleClick=", mainXaml);
+        Assert.DoesNotContain("GameGrid_MouseDoubleClick", mainSource);
     }
 
     [Fact]
