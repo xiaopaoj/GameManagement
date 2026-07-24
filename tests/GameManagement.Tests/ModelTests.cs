@@ -2220,6 +2220,39 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 老板键应支持组合配置并隐藏软件游戏窗口及按会话恢复静音()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var appRoot = Path.Combine(root!.FullName, "src", "GameManagement.App");
+        var mainXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var mainSource = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var serviceSource = File.ReadAllText(Path.Combine(appRoot, "Services", "BossModeServices.cs"));
+        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "BossKeySettingsWindow.xaml"));
+
+        Assert.Contains("Content=\"老板键\" Click=\"BossKeySettings_Click\"", mainXaml);
+        Assert.Contains("ControlCheck", settingsXaml);
+        Assert.Contains("AltCheck", settingsXaml);
+        Assert.Contains("ShiftCheck", settingsXaml);
+        Assert.Contains("WindowsCheck", settingsXaml);
+        Assert.Contains("RegisterHotKey", serviceSource);
+        Assert.Contains("windowProcessIds = gameProcessIds.Append((uint)Environment.ProcessId)", serviceSource);
+        Assert.Contains("GameAudioMuteService.SetMuted(gameProcessIds, true)", serviceSource);
+        Assert.Contains("Dictionary<string, bool>", serviceSource);
+        Assert.Contains("BossKeySettingsWindow", mainSource);
+        Assert.Contains("_bossModeController?.IsActive == true", mainSource);
+    }
+
+    [Fact]
+    public void 老板模式音频服务在没有目标进程时应安全返回()
+    {
+        var states = GameAudioMuteService.SetMuted(new HashSet<uint>(), true);
+        Assert.Empty(states);
+        GameAudioMuteService.Restore(states);
+    }
+
+    [Fact]
     public void 包装界面应仅从帮助菜单进入密码验证且工具保持未开放状态()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);

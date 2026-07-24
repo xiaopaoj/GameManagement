@@ -13,6 +13,7 @@ public partial class MainWindow : Window
 {
     private readonly DispatcherTimer _securityIdleTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     private DateTime _lastUserActivity = DateTime.UtcNow;
+    private BossModeController? _bossModeController;
 
     public MainWindow()
     {
@@ -22,7 +23,8 @@ public partial class MainWindow : Window
         PreviewKeyDown += (_, _) => _lastUserActivity = DateTime.UtcNow;
         _securityIdleTimer.Tick += SecurityIdleTimer_Tick;
         if (MasterKeyService.IsPasswordRequired(AppPaths.SecurityConfigFile)) _securityIdleTimer.Start();
-        Closed += (_, _) => _securityIdleTimer.Stop();
+        SourceInitialized += (_, _) => InitializeBossKey();
+        Closed += (_, _) => { _securityIdleTimer.Stop(); _bossModeController?.Dispose(); };
     }
 
     private void GameGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -140,6 +142,29 @@ public partial class MainWindow : Window
     private void ExtractionTemplates_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenExtractionTemplates(); }
 
     private void ExecutableIgnoreList_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenExecutableIgnoreList(); }
+    private void InitializeBossKey()
+    {
+        if (DataContext is not MainViewModel viewModel) return;
+        _bossModeController = new BossModeController(this, () => viewModel.Games);
+        if (!_bossModeController.Configure(viewModel.GetBossKeyConfiguration(), out var error) && !string.IsNullOrWhiteSpace(error))
+            MessageBox.Show(this, error, "老板键注册失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    private void BossKeySettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel || _bossModeController is null) return;
+        var previous = viewModel.GetBossKeyConfiguration();
+        var window = new BossKeySettingsWindow(previous) { Owner = this };
+        if (window.ShowDialog() != true) return;
+        if (!_bossModeController.Configure(window.Configuration, out var error))
+        {
+            _ = _bossModeController.Configure(previous, out _);
+            MessageBox.Show(this, error, "老板键注册失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        viewModel.SaveBossKeyConfiguration(window.Configuration);
+    }
+
     private void SecurityMode_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is MainViewModel { Tasks: var tasks } && tasks.Any(task => task.Status == "运行中")) { MessageBox.Show(this, "存在运行中的任务，禁止切换安全模式或修改密码。", "任务运行中", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
@@ -158,7 +183,7 @@ public partial class MainWindow : Window
     private void SecurityIdleTimer_Tick(object? sender, EventArgs e)
     {
         var minutes = Math.Max(1, MasterKeyService.LoadConfiguration(AppPaths.SecurityConfigFile).AutoLockMinutes);
-        if (DateTime.UtcNow - _lastUserActivity < TimeSpan.FromMinutes(minutes) || HasRunningGames() || HasRunningTasks()) return;
+        if (DateTime.UtcNow - _lastUserActivity < TimeSpan.FromMinutes(minutes) || _bossModeController?.IsActive == true || HasRunningGames() || HasRunningTasks()) return;
         _securityIdleTimer.Stop(); SecurityLockService.RestartIntoLockedMode();
     }
 

@@ -84,6 +84,8 @@ public sealed class StateStore
             }
             var state = JsonSerializer.Deserialize<AppState>(json, Options) ?? new AppState();
             state.UiSettings ??= new UiSettingsItem();
+            if (state.UiSettings.BossKeyModifiers <= 0) state.UiSettings.BossKeyModifiers = 3;
+            if (state.UiSettings.BossKeyVirtualKey <= 0) state.UiSettings.BossKeyVirtualKey = 0x42;
             if (state.UiSettings.ExtractionEngine is not (ExtractionEngineNames.Auto or ExtractionEngineNames.WinRar or ExtractionEngineNames.BuiltIn))
                 state.UiSettings.ExtractionEngine = ExtractionEngineNames.Auto;
             state.UiSettings.ExecutableIgnoreNames ??= new UiSettingsItem().ExecutableIgnoreNames;

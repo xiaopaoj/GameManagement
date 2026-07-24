@@ -34,6 +34,9 @@ public sealed class UiSettingsItem
 {
     public string ThemeName { get; set; } = ThemeNames.Classic;
     public string ExtractionEngine { get; set; } = ExtractionEngineNames.Auto;
+    public bool BossKeyEnabled { get; set; }
+    public int BossKeyModifiers { get; set; } = 3;
+    public int BossKeyVirtualKey { get; set; } = 0x42;
     public List<string> ExecutableIgnoreNames { get; set; } =
     [
         "UnityCrashHandler.exe", "UnityCrashHandler64.exe", "CrashReportClient.exe", "UE4PrereqSetup_x64.exe",

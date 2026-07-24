@@ -1,0 +1,15 @@
+<Window x:Class="GameManagement.BossKeySettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="老板键设置" Width="520" SizeToContent="Height" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Background="{DynamicResource AppBackgroundBrush}">
+    <Grid Margin="22">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock Text="老板键" FontSize="24" FontWeight="SemiBold"/>
+        <CheckBox x:Name="EnabledCheck" Grid.Row="1" Content="启用全局老板键" Margin="0,14,0,10"/>
+        <GroupBox Grid.Row="2" Header="组合键" Padding="12">
+            <StackPanel>
+                <WrapPanel><CheckBox x:Name="ControlCheck" Content="Ctrl" Margin="0,0,16,0"/><CheckBox x:Name="AltCheck" Content="Alt" Margin="0,0,16,0"/><CheckBox x:Name="ShiftCheck" Content="Shift" Margin="0,0,16,0"/><CheckBox x:Name="WindowsCheck" Content="Win"/></WrapPanel>
+                <ComboBox x:Name="KeyChoice" DisplayMemberPath="Name" Margin="0,12,0,0" MinWidth="180" HorizontalAlignment="Left"/>
+            </StackPanel>
+        </GroupBox>
+        <TextBlock Grid.Row="3" Margin="0,12,0,0" Foreground="#59636E" TextWrapping="Wrap" Text="按一次隐藏游戏窗口和本软件并静音游戏，再按一次恢复。仅处理软件正在监听的主游戏进程，不结束或暂停游戏。"/>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0"><Button Content="取消" IsCancel="True" Padding="18,8"/><Button Content="保存" IsDefault="True" Click="Save_Click" Padding="18,8"/></StackPanel>
+    </Grid>
+</Window>

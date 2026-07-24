@@ -544,6 +544,15 @@ public sealed class MainViewModel : ObservableObject
         ? $"已检测：{path}"
         : SelectedExtractionEngine == ExtractionEngineNames.BuiltIn ? "当前仅使用内置解压" : "未检测到 WinRAR，自动模式将回退内置解压";
 
+    public BossKeyConfiguration GetBossKeyConfiguration() => new(_state.UiSettings.BossKeyEnabled, (BossKeyModifiers)_state.UiSettings.BossKeyModifiers, _state.UiSettings.BossKeyVirtualKey);
+    public void SaveBossKeyConfiguration(BossKeyConfiguration configuration)
+    {
+        _state.UiSettings.BossKeyEnabled = configuration.Enabled;
+        _state.UiSettings.BossKeyModifiers = (int)configuration.Modifiers;
+        _state.UiSettings.BossKeyVirtualKey = configuration.VirtualKey;
+        Save(configuration.Enabled ? "老板键设置已保存" : "老板键已关闭");
+    }
+
     public string SelectedTheme
     {
         get => _state.UiSettings.ThemeName;
