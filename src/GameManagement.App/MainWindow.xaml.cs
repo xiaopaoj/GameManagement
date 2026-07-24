@@ -120,4 +120,10 @@ public partial class MainWindow : Window
     private void ExtractionTemplates_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenExtractionTemplates(); }
 
     private void ExecutableIgnoreList_Click(object sender, RoutedEventArgs e) { if (DataContext is MainViewModel viewModel) viewModel.OpenExecutableIgnoreList(); }
+    private void SecurityMode_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel { Tasks: var tasks } && tasks.Any(task => task.Status == "运行中")) { MessageBox.Show(this, "存在运行中的任务，禁止切换安全模式或修改密码。", "任务运行中", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        var window = new SecurityModeSettingsWindow { Owner = this };
+        if (window.ShowDialog() == true && window.RequiresRestart) Application.Current.Shutdown();
+    }
 }

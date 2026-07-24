@@ -11,12 +11,22 @@ public sealed class SecurityConfiguration
     public bool SecurityModeEnabled { get; set; }
     public string KeyProtection { get; set; } = "DPAPI-CurrentUser";
     public string ProtectedMasterKey { get; set; } = string.Empty;
+    public string PasswordSalt { get; set; } = string.Empty;
+    public int PasswordIterations { get; set; } = 600_000;
+    public string PasswordWrappedMasterKey { get; set; } = string.Empty;
 }
 
 public static class MasterKeyService
 {
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("GameManagement.MasterKey.v1");
     private static readonly object Sync = new();
+    private static byte[]? _unlockedPasswordKey;
+
+    public static SecurityConfiguration LoadConfiguration(string configurationPath) => File.Exists(configurationPath)
+        ? JsonSerializer.Deserialize<SecurityConfiguration>(File.ReadAllText(configurationPath, Encoding.UTF8)) ?? throw new InvalidDataException("安全配置内容无效。")
+        : new SecurityConfiguration();
+
+    public static bool IsPasswordRequired(string configurationPath) => File.Exists(configurationPath) && LoadConfiguration(configurationPath).SecurityModeEnabled;
 
     public static byte[] GetOrCreate(string configurationPath)
     {
@@ -24,10 +34,13 @@ public static class MasterKeyService
         {
             if (File.Exists(configurationPath))
             {
-                var existingConfiguration = JsonSerializer.Deserialize<SecurityConfiguration>(File.ReadAllText(configurationPath, Encoding.UTF8))
-                    ?? throw new InvalidDataException("安全配置内容无效。");
-                if (existingConfiguration.Version != 1 || existingConfiguration.KeyProtection != "DPAPI-CurrentUser" || string.IsNullOrWhiteSpace(existingConfiguration.ProtectedMasterKey))
-                    throw new InvalidDataException("安全配置版本或主密钥保护方式不受支持。");
+                var existingConfiguration = LoadConfiguration(configurationPath);
+                if (existingConfiguration.SecurityModeEnabled)
+                {
+                    if (_unlockedPasswordKey is null) throw new UnauthorizedAccessException("安全密码模式尚未解锁。");
+                    return _unlockedPasswordKey.ToArray();
+                }
+                if (existingConfiguration.Version != 1 || existingConfiguration.KeyProtection != "DPAPI-CurrentUser" || string.IsNullOrWhiteSpace(existingConfiguration.ProtectedMasterKey)) throw new InvalidDataException("安全配置版本或主密钥保护方式不受支持。");
                 return ProtectedData.Unprotect(Convert.FromBase64String(existingConfiguration.ProtectedMasterKey), Entropy, DataProtectionScope.CurrentUser);
             }
 
@@ -41,7 +54,107 @@ public static class MasterKeyService
         }
     }
 
-    private static void WriteConfigurationAtomic(string path, SecurityConfiguration configuration)
+    public static bool TryUnlock(string configurationPath, string password)
+    {
+        lock (Sync)
+        {
+            byte[]? wrappingKey = null;
+            try
+            {
+                var configuration = LoadConfiguration(configurationPath);
+                if (!configuration.SecurityModeEnabled || configuration.KeyProtection != "Password-PBKDF2-SHA256") return false;
+                wrappingKey = DerivePasswordKey(password, Convert.FromBase64String(configuration.PasswordSalt), configuration.PasswordIterations);
+                var masterKey = DecryptWrappedKey(Convert.FromBase64String(configuration.PasswordWrappedMasterKey), wrappingKey);
+                _unlockedPasswordKey = masterKey;
+                return true;
+            }
+            catch (CryptographicException) { return false; }
+            catch (FormatException) { return false; }
+            finally { if (wrappingKey is not null) CryptographicOperations.ZeroMemory(wrappingKey); }
+        }
+    }
+
+    public static void EnablePassword(string configurationPath, string password)
+    {
+        ValidatePassword(password);
+        lock (Sync)
+        {
+            var configuration = LoadConfiguration(configurationPath);
+            if (configuration.SecurityModeEnabled) throw new InvalidOperationException("安全密码模式已经开启。");
+            var masterKey = ProtectedData.Unprotect(Convert.FromBase64String(configuration.ProtectedMasterKey), Entropy, DataProtectionScope.CurrentUser);
+            var salt = RandomNumberGenerator.GetBytes(16);
+            var wrappingKey = DerivePasswordKey(password, salt, configuration.PasswordIterations);
+            configuration.SecurityModeEnabled = true;
+            configuration.KeyProtection = "Password-PBKDF2-SHA256";
+            configuration.PasswordSalt = Convert.ToBase64String(salt);
+            configuration.PasswordWrappedMasterKey = Convert.ToBase64String(EncryptWrappedKey(masterKey, wrappingKey));
+            configuration.ProtectedMasterKey = string.Empty;
+            WriteConfigurationAtomic(configurationPath, configuration);
+            _unlockedPasswordKey = masterKey;
+            CryptographicOperations.ZeroMemory(wrappingKey);
+        }
+    }
+
+    public static void ChangePassword(string configurationPath, string currentPassword, string newPassword)
+    {
+        ValidatePassword(newPassword);
+        if (!TryUnlock(configurationPath, currentPassword)) throw new UnauthorizedAccessException("当前安全密码不正确。");
+        lock (Sync)
+        {
+            var configuration = LoadConfiguration(configurationPath);
+            var salt = RandomNumberGenerator.GetBytes(16);
+            var wrappingKey = DerivePasswordKey(newPassword, salt, configuration.PasswordIterations);
+            configuration.PasswordSalt = Convert.ToBase64String(salt);
+            configuration.PasswordWrappedMasterKey = Convert.ToBase64String(EncryptWrappedKey(_unlockedPasswordKey!, wrappingKey));
+            WriteConfigurationAtomic(configurationPath, configuration);
+            CryptographicOperations.ZeroMemory(wrappingKey);
+        }
+    }
+
+    public static void DisablePassword(string configurationPath, string currentPassword)
+    {
+        if (!TryUnlock(configurationPath, currentPassword)) throw new UnauthorizedAccessException("当前安全密码不正确。");
+        lock (Sync)
+        {
+            var configuration = LoadConfiguration(configurationPath);
+            configuration.SecurityModeEnabled = false;
+            configuration.KeyProtection = "DPAPI-CurrentUser";
+            configuration.ProtectedMasterKey = Convert.ToBase64String(ProtectedData.Protect(_unlockedPasswordKey!, Entropy, DataProtectionScope.CurrentUser));
+            configuration.PasswordSalt = string.Empty; configuration.PasswordWrappedMasterKey = string.Empty;
+            WriteConfigurationAtomic(configurationPath, configuration);
+            ClearSession();
+        }
+    }
+
+    public static void ClearSession()
+    {
+        if (_unlockedPasswordKey is null) return;
+        CryptographicOperations.ZeroMemory(_unlockedPasswordKey); _unlockedPasswordKey = null;
+    }
+
+    private static void ValidatePassword(string password)
+    {
+        if (string.IsNullOrWhiteSpace(password) || password.Length < 8) throw new ArgumentException("安全密码至少需要 8 个字符。", nameof(password));
+    }
+
+    private static byte[] DerivePasswordKey(string password, byte[] salt, int iterations) => Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, 32);
+
+    private static byte[] EncryptWrappedKey(byte[] masterKey, byte[] wrappingKey)
+    {
+        var nonce = RandomNumberGenerator.GetBytes(12); var tag = new byte[16]; var cipher = new byte[masterKey.Length];
+        using (var aes = new AesGcm(wrappingKey, 16)) aes.Encrypt(nonce, masterKey, cipher, tag, Entropy);
+        return [.. nonce, .. tag, .. cipher];
+    }
+
+    private static byte[] DecryptWrappedKey(byte[] blob, byte[] wrappingKey)
+    {
+        if (blob.Length != 60) throw new CryptographicException("密码包装主密钥格式无效。");
+        var key = new byte[32];
+        using (var aes = new AesGcm(wrappingKey, 16)) aes.Decrypt(blob.AsSpan(0, 12), blob.AsSpan(28), blob.AsSpan(12, 16), key, Entropy);
+        return key;
+    }
+
+    public static void WriteConfigurationAtomic(string path, SecurityConfiguration configuration)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + ".tmp";

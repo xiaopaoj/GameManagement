@@ -2037,6 +2037,35 @@ public sealed class ModelTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Fact]
+    public void 安全密码应包装同一主密钥并支持修改和关闭模式()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var configPath = Path.Combine(root, "security.json");
+        try
+        {
+            var originalKey = MasterKeyService.GetOrCreate(configPath);
+            MasterKeyService.EnablePassword(configPath, "FirstPassword-123");
+            MasterKeyService.ClearSession();
+            Assert.True(MasterKeyService.IsPasswordRequired(configPath));
+            Assert.Throws<UnauthorizedAccessException>(() => MasterKeyService.GetOrCreate(configPath));
+            Assert.False(MasterKeyService.TryUnlock(configPath, "wrong-password"));
+            Assert.True(MasterKeyService.TryUnlock(configPath, "FirstPassword-123"));
+            Assert.Equal(originalKey, MasterKeyService.GetOrCreate(configPath));
+
+            MasterKeyService.ChangePassword(configPath, "FirstPassword-123", "SecondPassword-456");
+            MasterKeyService.ClearSession();
+            Assert.False(MasterKeyService.TryUnlock(configPath, "FirstPassword-123"));
+            Assert.True(MasterKeyService.TryUnlock(configPath, "SecondPassword-456"));
+
+            MasterKeyService.DisablePassword(configPath, "SecondPassword-456");
+            Assert.False(MasterKeyService.IsPasswordRequired(configPath));
+            Assert.Equal(originalKey, MasterKeyService.GetOrCreate(configPath));
+        }
+        finally { MasterKeyService.ClearSession(); Directory.Delete(root, true); }
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

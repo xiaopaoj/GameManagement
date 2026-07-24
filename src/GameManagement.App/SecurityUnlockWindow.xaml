@@ -1,0 +1,9 @@
+<Window x:Class="GameManagement.SecurityUnlockWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="安全模式解锁" Width="460" SizeToContent="Height" ResizeMode="NoResize" WindowStartupLocation="CenterScreen" ShowInTaskbar="True" Background="{DynamicResource AppBackgroundBrush}">
+    <Grid Margin="24">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock Text="请输入安全密码" FontSize="24" FontWeight="SemiBold"/>
+        <TextBlock Grid.Row="1" Text="验证成功后才会加载真实数据库和游戏界面。" Foreground="#59636E" Margin="0,8,0,14" TextWrapping="Wrap"/>
+        <PasswordBox x:Name="PasswordText" Grid.Row="2" Padding="8" KeyDown="PasswordText_KeyDown"/>
+        <DockPanel Grid.Row="3" Margin="0,16,0,0"><Button DockPanel.Dock="Right" Content="退出" IsCancel="True" Padding="18,8"/><Button DockPanel.Dock="Right" Content="解锁" IsDefault="True" Click="Unlock_Click" Padding="18,8"/><TextBlock x:Name="StatusText" Foreground="#B42318" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
+    </Grid>
+</Window>

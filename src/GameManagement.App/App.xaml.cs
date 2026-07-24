@@ -18,6 +18,15 @@ public partial class App : Application
             AppPaths.EnsureDirectories();
             AppLogger.Initialize();
             base.OnStartup(e);
+            var passwordRequired = MasterKeyService.IsPasswordRequired(AppPaths.SecurityConfigFile);
+            if (e.Args.Any(argument => argument.Equals("--scheduled-backup", StringComparison.OrdinalIgnoreCase)) && passwordRequired)
+            {
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                await BackupNotificationService.ShowAsync("游戏管理软件每日备份", "安全模式尚未解锁，本次计划备份已跳过；下次解锁后可手动补执行。", System.Windows.Forms.ToolTipIcon.Warning);
+                Shutdown(0);
+                return;
+            }
+            if (passwordRequired && new SecurityUnlockWindow().ShowDialog() != true) { Shutdown(0); return; }
             var startupStore = new StateStore();
             var startupState = startupStore.Load();
             ThemeService.Apply(startupState.UiSettings.ThemeName);
@@ -54,6 +63,12 @@ public partial class App : Application
             MessageBox.Show($"软件初始化失败：{ex.Message}\n请确认程序所在目录具有写入权限。", "启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(-1);
         }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        MasterKeyService.ClearSession();
+        base.OnExit(e);
     }
 
     private static void PromptLegacyDatabaseCleanup()
