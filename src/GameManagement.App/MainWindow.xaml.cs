@@ -63,8 +63,20 @@ public partial class MainWindow : Window
             PrepareContextMenuItem.Tag = prepared ? "启动游戏" : "准备游玩";
             if (sender is System.Windows.Controls.ContextMenu menu)
             {
-                foreach (var menuItem in menu.Items.OfType<System.Windows.Controls.MenuItem>())
-                    menuItem.IsEnabled = !multiple || ReferenceEquals(menuItem, PrepareContextMenuItem) || ReferenceEquals(menuItem, ArchiveContextMenuItem) || ReferenceEquals(menuItem, ExtractionTemplateContextMenuItem);
+                foreach (var entry in menu.Items)
+                {
+                    if (entry is System.Windows.Controls.Separator separator)
+                    {
+                        separator.Visibility = multiple ? Visibility.Collapsed : Visibility.Visible;
+                        continue;
+                    }
+                    if (entry is not System.Windows.Controls.MenuItem menuItem) continue;
+                    var batchSupported = ReferenceEquals(menuItem, PrepareContextMenuItem)
+                        || ReferenceEquals(menuItem, ArchiveContextMenuItem)
+                        || ReferenceEquals(menuItem, ExtractionTemplateContextMenuItem);
+                    menuItem.Visibility = !multiple || batchSupported ? Visibility.Visible : Visibility.Collapsed;
+                    menuItem.IsEnabled = true;
+                }
             }
             PopulateExtractionTemplateMenu(viewModel);
         }

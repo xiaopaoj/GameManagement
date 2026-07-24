@@ -1957,6 +1957,21 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void 游戏库批量右键菜单应隐藏不支持项及多余分隔线()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "GameManagement.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var mainSource = File.ReadAllText(Path.Combine(root!.FullName, "src", "GameManagement.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("separator.Visibility = multiple ? Visibility.Collapsed : Visibility.Visible", mainSource);
+        Assert.Contains("menuItem.Visibility = !multiple || batchSupported ? Visibility.Visible : Visibility.Collapsed", mainSource);
+        Assert.Contains("ReferenceEquals(menuItem, PrepareContextMenuItem)", mainSource);
+        Assert.Contains("ReferenceEquals(menuItem, ArchiveContextMenuItem)", mainSource);
+        Assert.Contains("ReferenceEquals(menuItem, ExtractionTemplateContextMenuItem)", mainSource);
+    }
+
+    [Fact]
     public void 游戏库右键菜单应支持系统存档开关且名称备注使用同一窗口编辑()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
